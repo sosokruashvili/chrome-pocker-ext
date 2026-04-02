@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Poker Tracker",
+  "version": "1.0.37",
+  "description": "Tracks poker actions on Adjarabet",
+  "permissions": ["tabs", "storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://adjarabetnewpokerapp.adjarabet.com/*"],
+      "js": ["inspector.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png"
+  }
+}

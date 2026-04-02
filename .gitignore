@@ -1,0 +1,17 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# If you add tooling later
+node_modules/
+
+# Local secrets (never commit API keys)
+.env
+.env.*
