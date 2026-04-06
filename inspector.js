@@ -1,13 +1,23 @@
-// === POKER HAND TRACKER v79 ===
+// === POKER HAND TRACKER v81 ===
 
 (function() {
   "use strict";
 
-  const TRACKER_VERSION = "v80";
+  const TRACKER_VERSION = "v81";
   const LOAD_STAMP = new Date().toLocaleTimeString() + " #" + Math.random().toString(36).slice(2, 7);
   const API_URL = "https://team.evlog.ge/api/hand-history";
-  const DEBUG_EMIT_REASONS = true;
-  const DEBUG_SANITY_MONITOR = true;
+  const HUD_STATS_API_URL = "https://team.evlog.ge/api/hand-history/hud-stats";
+  const HUD_STATS_REFRESH_MS = 60 * 1000;
+  const DEBUG_HUD_STATS = false;
+  const HUD_STAT_BADGE_COLORS = {
+    vpip: "#22543d",
+    pfr: "#742a2a",
+    threeBet: "#744210",
+    af: "#553c9a",
+    hands: "#2a4365"
+  };
+  const DEBUG_EMIT_REASONS = false;
+  const DEBUG_SANITY_MONITOR = false;
   const LOG_COL_WIDTH = 10;
 
   // action_7 is treated as blind/system event and filtered.
@@ -48,6 +58,12 @@
   let lastEmitSignatureBySeat = {};
   let handActions = [];
   let playerNameBySeat = {};
+  let tablePlayersOverlayHidden = true;
+  let currentTablePlayerNames = [];
+  let hudStatsByPlayerName = {};
+  let hudStatsFetchedAtByPlayerName = {};
+  let hudStatsRequestInFlight = false;
+  let hudStatsLoopTimer = null;
   const seenUnknownLa = new Set();
   let seenSanityWarningKeys = new Set();
 
@@ -66,7 +82,7 @@
       badge.textContent = "Poker Tracker " + TRACKER_VERSION + " | " + LOAD_STAMP;
       badge.style.cssText = [
         "position:fixed",
-        "bottom:100px",
+        "bottom:12px",
         "right:12px",
         "z-index:2147483647",
         "background:#111827",
@@ -318,6 +334,354 @@
     return computed;
   }
 
+  function normalizePlayerNames(names) {
+    const uniq = new Set();
+    const normalized = [];
+    (Array.isArray(names) ? names : []).forEach((name) => {
+      const safeName = String(name || "").trim();
+      if (!safeName) return;
+      if (uniq.has(safeName)) return;
+      uniq.add(safeName);
+      normalized.push(safeName);
+    });
+    return normalized;
+  }
+
+  function debugHudStatsLog(message, extra) {
+    if (!DEBUG_HUD_STATS) return;
+    if (extra !== undefined) {
+      console.log("[tracker][hud] " + message, extra);
+      return;
+    }
+    console.log("[tracker][hud] " + message);
+  }
+
+  function renderHudOverlayFromCurrentState() {
+    const el = document.getElementById("poker-tracker-table-players-overlay");
+    if (!el) return;
+    if (!currentTablePlayerNames.length) {
+      el.textContent = "-";
+      return;
+    }
+    el.replaceChildren();
+
+    const table = document.createElement("table");
+    table.style.cssText = [
+      "width:100%",
+      "border-collapse:collapse",
+      "table-layout:fixed",
+      "font:14px/1.35 Consolas,Monaco,'Courier New',monospace"
+    ].join(";");
+
+    const headerRow = document.createElement("tr");
+    const playerHeader = document.createElement("td");
+    playerHeader.style.cssText = [
+      "padding:0 4px 6px 0",
+      "width:36%",
+      "font:600 11px/1.2 Arial,sans-serif",
+      "letter-spacing:.04em",
+      "text-transform:uppercase",
+      "color:#9ca3af",
+      "white-space:nowrap"
+    ].join(";");
+    playerHeader.textContent = "Player";
+
+    const statsHeader = document.createElement("td");
+    statsHeader.style.cssText = [
+      "padding:0 0 6px 0",
+      "width:64%",
+      "font:600 11px/1.2 Arial,sans-serif",
+      "letter-spacing:.04em",
+      "text-transform:uppercase",
+      "color:#9ca3af",
+      "white-space:nowrap"
+    ].join(";");
+    statsHeader.textContent = "VPIP | PFR | 3B | AF | Hands";
+    headerRow.appendChild(playerHeader);
+    headerRow.appendChild(statsHeader);
+    table.appendChild(headerRow);
+
+    currentTablePlayerNames.forEach((name) => {
+      const row = document.createElement("tr");
+
+      const playerCell = document.createElement("td");
+      playerCell.style.cssText = [
+        "padding:2px 0px 2px 0",
+        "width:20%",
+        "white-space:nowrap",
+        "overflow:hidden",
+        "text-overflow:ellipsis",
+        "vertical-align:top",
+        "color:#f9fafb"
+      ].join(";");
+      playerCell.textContent = name;
+
+      const statsCell = document.createElement("td");
+      statsCell.style.cssText = [
+        "padding:2px 0",
+        "width:64%",
+        "white-space:normal",
+        "overflow:hidden",
+        "text-overflow:ellipsis",
+        "vertical-align:top",
+        "color:#e5e7eb"
+      ].join(";");
+      renderHudStatBadges(statsCell, name);
+
+      row.appendChild(playerCell);
+      row.appendChild(statsCell);
+      table.appendChild(row);
+    });
+
+    el.appendChild(table);
+  }
+
+  function setCurrentTablePlayerNames(names) {
+    const next = normalizePlayerNames(names);
+    const prevKey = currentTablePlayerNames.join("|");
+    const nextKey = next.join("|");
+    currentTablePlayerNames = next;
+    if (prevKey !== nextKey) {
+      debugHudStatsLog("table players updated", currentTablePlayerNames);
+      runHudStatsLoopTick().catch(() => {});
+    }
+  }
+
+  function hasCompleteHudStats(stats) {
+    if (!stats || typeof stats !== "object") return false;
+    return (
+      stats.hands !== undefined &&
+      stats.vpip_percentage !== undefined &&
+      stats.pfr_percentage !== undefined &&
+      stats.af !== undefined &&
+      stats.three_bet_percentage !== undefined
+    );
+  }
+
+  function fmtHudNum(value, digits) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "-";
+    return n.toFixed(digits);
+  }
+
+  function formatHudLine(playerName) {
+    const stats = hudStatsByPlayerName[playerName];
+    if (!hasCompleteHudStats(stats)) {
+      return "loading...";
+    }
+    const hands = toNum(stats.hands, 0);
+    const vpip = fmtHudNum(stats.vpip_percentage, 2);
+    const pfr = fmtHudNum(stats.pfr_percentage, 2);
+    const af = fmtHudNum(stats.af, 2);
+    const threeBet = fmtHudNum(stats.three_bet_percentage, 2);
+    return vpip + " | " + pfr + " | " + threeBet + " | " + af + " | " + hands;
+  }
+
+  function makeHudBadge(text, backgroundColor, title) {
+    const badge = document.createElement("span");
+    badge.style.cssText = [
+      "display:inline-block",
+      "padding:2px 6px",
+      "margin:0 4px 4px 0",
+      "border-radius:5px",
+      "background:" + backgroundColor,
+      "color:#ffffff",
+      "font:600 12px/1.2 Arial,sans-serif",
+      "white-space:nowrap"
+    ].join(";");
+    badge.textContent = text;
+    if (title) badge.title = title;
+    return badge;
+  }
+
+  function renderHudStatBadges(container, playerName) {
+    container.replaceChildren();
+    const stats = hudStatsByPlayerName[playerName];
+    if (!hasCompleteHudStats(stats)) {
+      container.textContent = "loading...";
+      return;
+    }
+
+    const vpip = fmtHudNum(stats.vpip_percentage, 2);
+    const pfr = fmtHudNum(stats.pfr_percentage, 2);
+    const threeBet = fmtHudNum(stats.three_bet_percentage, 2);
+    const af = fmtHudNum(stats.af, 2);
+    const hands = String(toNum(stats.hands, 0));
+
+    container.appendChild(makeHudBadge(vpip, HUD_STAT_BADGE_COLORS.vpip, "VPIP"));
+    container.appendChild(makeHudBadge(pfr, HUD_STAT_BADGE_COLORS.pfr, "PFR"));
+    container.appendChild(makeHudBadge(threeBet, HUD_STAT_BADGE_COLORS.threeBet, "3B"));
+    container.appendChild(makeHudBadge(af, HUD_STAT_BADGE_COLORS.af, "AF"));
+    container.appendChild(makeHudBadge(hands, HUD_STAT_BADGE_COLORS.hands, "Hands"));
+  }
+
+  async function requestHudStats(playerNames, reason, allowMissingRetry) {
+    const normalizedNames = normalizePlayerNames(playerNames);
+    if (!normalizedNames.length) return;
+
+    hudStatsRequestInFlight = true;
+    const payload = JSON.stringify({ playernames: normalizedNames });
+    debugHudStatsLog("POST " + HUD_STATS_API_URL + " (" + reason + ")", normalizedNames);
+    try {
+      const response = await fetch(HUD_STATS_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload
+      });
+      const rawText = await response.text();
+      let data = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch (e) {
+        debugHudStatsLog("json parse failed", { status: response.status, sample: String(rawText || "").slice(0, 240) });
+      }
+      const rows = data && Array.isArray(data.data)
+        ? data.data
+        : data && Array.isArray(data.players)
+          ? data.players
+          : Array.isArray(data)
+            ? data
+            : [];
+      const now = Date.now();
+      debugHudStatsLog("response meta", {
+        status: response.status,
+        ok: response.ok,
+        rows: rows.length
+      });
+
+      normalizedNames.forEach((name) => {
+        hudStatsFetchedAtByPlayerName[name] = now;
+      });
+
+      rows.forEach((row) => {
+        if (!row || typeof row !== "object") return;
+        const rowName = String(row.player_name || row.playerName || row.name || "").trim();
+        if (!rowName) return;
+        hudStatsByPlayerName[rowName] = row;
+        hudStatsFetchedAtByPlayerName[rowName] = now;
+      });
+      renderHudOverlayFromCurrentState();
+    } catch (e) {
+      debugHudStatsLog("request failed", String((e && e.message) || e || "unknown_error"));
+    } finally {
+      hudStatsRequestInFlight = false;
+    }
+
+    if (!allowMissingRetry) return;
+    const missing = normalizedNames.filter((name) => !hasCompleteHudStats(hudStatsByPlayerName[name]));
+    if (!missing.length) return;
+    await requestHudStats(missing, "missing_retry", false);
+  }
+
+  async function runHudStatsLoopTick() {
+    if (hudStatsRequestInFlight) return;
+    const now = Date.now();
+    const players = currentTablePlayerNames.slice();
+    if (!players.length) return;
+
+    const playersToFetch = players.filter((name) => {
+      const lastFetchedAt = toNum(hudStatsFetchedAtByPlayerName[name], 0);
+      if (!hasCompleteHudStats(hudStatsByPlayerName[name])) return true;
+      return now - lastFetchedAt >= HUD_STATS_REFRESH_MS;
+    });
+    if (!playersToFetch.length) return;
+    debugHudStatsLog("tick fetch players", playersToFetch);
+
+    await requestHudStats(playersToFetch, "minute_loop", true);
+  }
+
+  function startHudStatsLoop() {
+    if (hudStatsLoopTimer) return;
+    hudStatsLoopTimer = setInterval(() => {
+      runHudStatsLoopTick().catch(() => {});
+    }, HUD_STATS_REFRESH_MS);
+    runHudStatsLoopTick().catch(() => {});
+  }
+  startHudStatsLoop();
+
+  function updateTablePlayersOverlay(gs, activeSeatIndexes) {
+    try {
+      const id = "poker-tracker-table-players-overlay";
+      const toggleId = "poker-tracker-table-players-toggle";
+      let el = document.getElementById(id);
+      if (!el) {
+        el = document.createElement("div");
+        el.id = id;
+        el.style.cssText = [
+          "position:fixed",
+          "top:50%",
+          "right:12px",
+          "transform:translateY(-50%)",
+          "z-index:2147483646",
+          "background:rgba(17,24,39,0.92)",
+          "color:#e5e7eb",
+          "border:1px solid #22c55e",
+          "padding:12px 14px",
+          "border-radius:8px",
+          "font:15px/1.5 Arial,sans-serif",
+          "box-shadow:0 4px 16px rgba(0,0,0,0.3)",
+          "pointer-events:none",
+          "min-width:260px",
+          "max-width:320px",
+          "max-height:70vh",
+          "overflow-y:auto",
+          "overflow-x:hidden",
+          "white-space:pre-wrap",
+          "word-break:break-word"
+        ].join(";");
+        document.documentElement.appendChild(el);
+      }
+      let toggleBtn = document.getElementById(toggleId);
+      if (!toggleBtn) {
+        toggleBtn = document.createElement("button");
+        toggleBtn.id = toggleId;
+        toggleBtn.type = "button";
+        toggleBtn.style.cssText = [
+          "position:fixed",
+          "top:calc(50% - 220px)",
+          "right:12px",
+          "z-index:2147483647",
+          "background:linear-gradient(180deg,#1f2937,#111827)",
+          "color:#f8fafc",
+          "border:1px solid #22c55e",
+          "border-radius:6px",
+          "padding:6px 12px",
+          "font:700 12px/1 Arial,sans-serif",
+          "letter-spacing:.06em",
+          "cursor:pointer",
+          "pointer-events:auto",
+          "box-shadow:0 3px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06)"
+        ].join(";");
+        toggleBtn.addEventListener("click", function() {
+          tablePlayersOverlayHidden = !tablePlayersOverlayHidden;
+          const overlay = document.getElementById(id);
+          if (overlay) {
+            overlay.style.display = tablePlayersOverlayHidden ? "none" : "block";
+          }
+          this.textContent = "HUD";
+          this.style.opacity = tablePlayersOverlayHidden ? "0.75" : "1";
+        });
+        document.documentElement.appendChild(toggleBtn);
+      }
+      toggleBtn.textContent = "HUD";
+      toggleBtn.style.opacity = tablePlayersOverlayHidden ? "0.75" : "1";
+      el.style.display = tablePlayersOverlayHidden ? "none" : "block";
+
+      if (!activeSeatIndexes.length) {
+        setCurrentTablePlayerNames([]);
+        el.textContent = "-";
+        return;
+      }
+      const players = activeSeatIndexes.map((idx) => {
+        const seat = gs.s[idx];
+        const name = (seat && (seat.dn || seat.n)) || "?";
+        return name;
+      });
+      setCurrentTablePlayerNames(players);
+      renderHudOverlayFromCurrentState();
+    } catch (e) {}
+  }
+
   function getPendingResponderSeatIndexes(excludeSeatIdx) {
     return Object.keys(streetPendingResponseBySeat)
       .map((key) => Number(key))
@@ -326,7 +690,7 @@
 
   async function sendAction(entry) {
     const payload = JSON.stringify(entry);
-    console.log("[tracker] POST " + API_URL, payload);
+    //console.log("[tracker] POST " + API_URL, payload);
     try {
       await fetch(API_URL, {
         method: "POST",
@@ -934,6 +1298,8 @@
       }
       trackStreetPressure(resolvedAction, idx, currentB, activeSeatIndexes);
     }
+
+    updateTablePlayersOverlay(gs, activeSeatIndexes);
 
     previousBoardCount = effectiveBoardCount;
     previousRound = roundNow;
