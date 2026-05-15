@@ -1,10 +1,9 @@
-// === POKER HAND TRACKER v81 ===
+// === POKER HAND TRACKER v8.2 ===
 
 (function() {
   "use strict";
 
-  const TRACKER_VERSION = "v81";
-  const LOAD_STAMP = new Date().toLocaleTimeString() + " #" + Math.random().toString(36).slice(2, 7);
+  const TRACKER_VERSION = "v8.2";
   const API_URL = "https://team.evlog.ge/api/hand-history";
   const HUD_STATS_API_URL = "https://team.evlog.ge/api/hand-history/hud-stats";
   const HUD_STATS_REFRESH_MS = 60 * 1000;
@@ -59,7 +58,9 @@
   let handActions = [];
   let playerNameBySeat = {};
   let tablePlayersOverlayHidden = true;
-  let trackingEnabled = true;
+  let trackingEnabled = false;
+  let trackingSendActive = false;
+  let pendingTrackingArm = false;
   let currentTablePlayerNames = [];
   let hudStatsByPlayerName = {};
   let hudStatsFetchedAtByPlayerName = {};
@@ -69,7 +70,7 @@
   let seenSanityWarningKeys = new Set();
 
   console.log(
-    "%c[tracker] " + TRACKER_VERSION + " loaded " + LOAD_STAMP,
+    "%c[tracker] " + TRACKER_VERSION + " loaded",
     "background:#16a34a;color:#fff;padding:3px 8px;border-radius:4px;font-weight:bold;"
   );
 
@@ -80,7 +81,7 @@
 
       const badge = document.createElement("div");
       badge.id = "poker-tracker-version-badge";
-      badge.textContent = "Poker Tracker " + TRACKER_VERSION + " | " + LOAD_STAMP;
+      badge.textContent = "Poker Tracker " + TRACKER_VERSION;
       badge.style.cssText = [
         "position:fixed",
         "bottom:12px",
@@ -161,6 +162,15 @@
   }
 
   function resetHandState(handId, startingBoardCount) {
+    if (pendingTrackingArm && trackingEnabled) {
+      trackingSendActive = true;
+      pendingTrackingArm = false;
+      console.log("%c[tracker] tracking armed -> sending actions starting hand " + handId, "color:#22c55e;font-weight:bold;");
+      try {
+        const switchEl = document.getElementById("poker-tracker-tracking-switch");
+        if (switchEl) applyTrackingSwitchState(switchEl);
+      } catch (e) {}
+    }
     currentHandId = handId;
     previousBoardCount = startingBoardCount;
     previousRound = getRoundFromBoardCount(startingBoardCount);
@@ -654,27 +664,112 @@
         ].join(";");
         document.documentElement.appendChild(el);
       }
+      const controlsId = "poker-tracker-controls";
+      let controlsEl = document.getElementById(controlsId);
+      if (!controlsEl) {
+        controlsEl = document.createElement("div");
+        controlsEl.id = controlsId;
+        controlsEl.style.cssText = [
+          "position:fixed",
+          "top:10%",
+          "right:12px",
+          "z-index:2147483647",
+          "display:flex",
+          "flex-direction:row",
+          "align-items:stretch",
+          "gap:8px"
+        ].join(";");
+        document.documentElement.appendChild(controlsEl);
+      }
+
+      const controlHeight = "30px";
+      const sharedControlBaseCss = [
+        "height:" + controlHeight,
+        "box-sizing:border-box",
+        "display:inline-flex",
+        "align-items:center",
+        "border:1px solid #22c55e",
+        "border-radius:6px",
+        "background:linear-gradient(180deg,#1f2937,#111827)",
+        "color:#f8fafc",
+        "font:700 12px/1 Arial,sans-serif",
+        "letter-spacing:.06em",
+        "cursor:pointer",
+        "pointer-events:auto",
+        "user-select:none",
+        "box-shadow:0 3px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06)"
+      ];
+
+      const trackingSwitchId = "poker-tracker-tracking-switch";
+      let trackingSwitch = document.getElementById(trackingSwitchId);
+      if (!trackingSwitch) {
+        trackingSwitch = document.createElement("div");
+        trackingSwitch.id = trackingSwitchId;
+        trackingSwitch.style.cssText = sharedControlBaseCss.concat([
+          "gap:8px",
+          "padding:0 12px"
+        ]).join(";");
+
+        const labelEl = document.createElement("span");
+        labelEl.id = trackingSwitchId + "-label";
+        labelEl.textContent = "REC";
+        trackingSwitch.appendChild(labelEl);
+
+        const trackEl = document.createElement("span");
+        trackEl.id = trackingSwitchId + "-track";
+        trackEl.style.cssText = [
+          "position:relative",
+          "display:inline-block",
+          "width:32px",
+          "height:18px",
+          "border-radius:999px",
+          "transition:background-color .15s ease",
+          "box-shadow:inset 0 1px 2px rgba(0,0,0,0.4)"
+        ].join(";");
+
+        const thumbEl = document.createElement("span");
+        thumbEl.id = trackingSwitchId + "-thumb";
+        thumbEl.style.cssText = [
+          "position:absolute",
+          "top:2px",
+          "left:2px",
+          "width:14px",
+          "height:14px",
+          "border-radius:50%",
+          "background:#ffffff",
+          "transition:left .15s ease",
+          "box-shadow:0 1px 2px rgba(0,0,0,0.4)"
+        ].join(";");
+        trackEl.appendChild(thumbEl);
+        trackingSwitch.appendChild(trackEl);
+
+        trackingSwitch.setAttribute("role", "switch");
+        trackingSwitch.addEventListener("click", function() {
+          if (trackingEnabled) {
+            trackingEnabled = false;
+            trackingSendActive = false;
+            pendingTrackingArm = false;
+          } else {
+            trackingEnabled = true;
+            if (!trackingSendActive) {
+              pendingTrackingArm = true;
+              console.log("[tracker] tracking armed - waiting for next hand to start sending");
+            }
+          }
+          applyTrackingSwitchState(this);
+        });
+        controlsEl.appendChild(trackingSwitch);
+      }
+      applyTrackingSwitchState(trackingSwitch);
+
       let toggleBtn = document.getElementById(toggleId);
       if (!toggleBtn) {
         toggleBtn = document.createElement("button");
         toggleBtn.id = toggleId;
         toggleBtn.type = "button";
-        toggleBtn.style.cssText = [
-          "position:fixed",
-          "top:calc(50% - 220px)",
-          "right:12px",
-          "z-index:2147483647",
-          "background:linear-gradient(180deg,#1f2937,#111827)",
-          "color:#f8fafc",
-          "border:1px solid #22c55e",
-          "border-radius:6px",
-          "padding:6px 12px",
-          "font:700 12px/1 Arial,sans-serif",
-          "letter-spacing:.06em",
-          "cursor:pointer",
-          "pointer-events:auto",
-          "box-shadow:0 3px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06)"
-        ].join(";");
+        toggleBtn.style.cssText = sharedControlBaseCss.concat([
+          "padding:0 14px"
+        ]).join(";");
         toggleBtn.addEventListener("click", function() {
           tablePlayersOverlayHidden = !tablePlayersOverlayHidden;
           const overlay = document.getElementById(id);
@@ -684,39 +779,11 @@
           this.textContent = "HUD";
           this.style.opacity = tablePlayersOverlayHidden ? "0.75" : "1";
         });
-        document.documentElement.appendChild(toggleBtn);
+        controlsEl.appendChild(toggleBtn);
       }
       toggleBtn.textContent = "HUD";
       toggleBtn.style.opacity = tablePlayersOverlayHidden ? "0.75" : "1";
       el.style.display = tablePlayersOverlayHidden ? "none" : "block";
-
-      const trackingToggleId = "poker-tracker-tracking-toggle";
-      let trackingBtn = document.getElementById(trackingToggleId);
-      if (!trackingBtn) {
-        trackingBtn = document.createElement("button");
-        trackingBtn.id = trackingToggleId;
-        trackingBtn.type = "button";
-        trackingBtn.style.cssText = [
-          "position:fixed",
-          "top:calc(50% - 220px)",
-          "right:84px",
-          "z-index:2147483647",
-          "border:1px solid #22c55e",
-          "border-radius:6px",
-          "padding:6px 12px",
-          "font:700 12px/1 Arial,sans-serif",
-          "letter-spacing:.06em",
-          "cursor:pointer",
-          "pointer-events:auto",
-          "box-shadow:0 3px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06)"
-        ].join(";");
-        trackingBtn.addEventListener("click", function() {
-          trackingEnabled = !trackingEnabled;
-          applyTrackingToggleStyle(this);
-        });
-        document.documentElement.appendChild(trackingBtn);
-      }
-      applyTrackingToggleStyle(trackingBtn);
 
       if (!activeSeatIndexes.length) {
         setCurrentTablePlayerNames([]);
@@ -740,7 +807,7 @@
   }
 
   async function sendAction(entry) {
-    if (!trackingEnabled) return;
+    if (!trackingEnabled || !trackingSendActive) return;
     const payload = JSON.stringify(entry);
     //console.log("[tracker] POST " + API_URL, payload);
     try {
@@ -752,19 +819,27 @@
     } catch (e) {}
   }
 
-  function applyTrackingToggleStyle(btn) {
-    if (!btn) return;
+  function applyTrackingSwitchState(switchEl) {
+    if (!switchEl) return;
+    const track = switchEl.querySelector("#" + switchEl.id + "-track");
+    const thumb = switchEl.querySelector("#" + switchEl.id + "-thumb");
+    switchEl.setAttribute("aria-checked", trackingEnabled ? "true" : "false");
+
+    let trackColor = "#4b5563";
+    let title = "Tracking disabled";
     if (trackingEnabled) {
-      btn.style.background = "linear-gradient(180deg,#16a34a,#15803d)";
-      btn.style.borderColor = "#22c55e";
-      btn.style.color = "#f0fdf4";
-      btn.textContent = "REC ON";
-    } else {
-      btn.style.background = "linear-gradient(180deg,#374151,#1f2937)";
-      btn.style.borderColor = "#6b7280";
-      btn.style.color = "#e5e7eb";
-      btn.textContent = "REC OFF";
+      if (pendingTrackingArm) {
+        trackColor = "#eab308";
+        title = "Tracking armed - waiting for next hand";
+      } else {
+        trackColor = "#16a34a";
+        title = "Tracking active";
+      }
     }
+    switchEl.title = title;
+    if (track) track.style.background = trackColor;
+    if (thumb) thumb.style.left = trackingEnabled ? "16px" : "2px";
+    switchEl.style.opacity = trackingEnabled ? "1" : "0.85";
   }
 
   function trackStreetPressure(action, seatIdx, amount, activeSeatIndexes) {
