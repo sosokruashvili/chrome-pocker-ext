@@ -59,6 +59,7 @@
   let handActions = [];
   let playerNameBySeat = {};
   let tablePlayersOverlayHidden = true;
+  let trackingEnabled = true;
   let currentTablePlayerNames = [];
   let hudStatsByPlayerName = {};
   let hudStatsFetchedAtByPlayerName = {};
@@ -374,31 +375,34 @@
     ].join(";");
 
     const headerRow = document.createElement("tr");
-    const playerHeader = document.createElement("td");
+    const playerHeader = document.createElement("th");
     playerHeader.style.cssText = [
       "padding:0 4px 6px 0",
-      "width:36%",
+      "width:38%",
       "font:600 11px/1.2 Arial,sans-serif",
       "letter-spacing:.04em",
       "text-transform:uppercase",
       "color:#9ca3af",
-      "white-space:nowrap"
+      "white-space:nowrap",
+      "text-align:left"
     ].join(";");
     playerHeader.textContent = "Player";
-
-    const statsHeader = document.createElement("td");
-    statsHeader.style.cssText = [
-      "padding:0 0 6px 0",
-      "width:64%",
-      "font:600 11px/1.2 Arial,sans-serif",
-      "letter-spacing:.04em",
-      "text-transform:uppercase",
-      "color:#9ca3af",
-      "white-space:nowrap"
-    ].join(";");
-    statsHeader.textContent = "VPIP | PFR | 3B | AF | Hands";
     headerRow.appendChild(playerHeader);
-    headerRow.appendChild(statsHeader);
+    ["VPIP", "PFR", "3B", "AF", "H"].forEach((label) => {
+      const statHeader = document.createElement("th");
+      statHeader.style.cssText = [
+        "padding:0 0 6px 0",
+        "width:12.4%",
+        "font:600 11px/1.2 Arial,sans-serif",
+        "letter-spacing:.04em",
+        "text-transform:uppercase",
+        "color:#9ca3af",
+        "white-space:nowrap",
+        "text-align:center"
+      ].join(";");
+      statHeader.textContent = label;
+      headerRow.appendChild(statHeader);
+    });
     table.appendChild(headerRow);
 
     currentTablePlayerNames.forEach((name) => {
@@ -407,7 +411,7 @@
       const playerCell = document.createElement("td");
       playerCell.style.cssText = [
         "padding:2px 0px 2px 0",
-        "width:20%",
+        "width:38%",
         "white-space:nowrap",
         "overflow:hidden",
         "text-overflow:ellipsis",
@@ -415,21 +419,40 @@
         "color:#f9fafb"
       ].join(";");
       playerCell.textContent = name;
-
-      const statsCell = document.createElement("td");
-      statsCell.style.cssText = [
-        "padding:2px 0",
-        "width:64%",
-        "white-space:normal",
-        "overflow:hidden",
-        "text-overflow:ellipsis",
-        "vertical-align:top",
-        "color:#e5e7eb"
-      ].join(";");
-      renderHudStatBadges(statsCell, name);
-
       row.appendChild(playerCell);
-      row.appendChild(statsCell);
+
+      const stats = hudStatsByPlayerName[name];
+      if (!hasCompleteHudStats(stats)) {
+        const loadingCell = document.createElement("td");
+        loadingCell.colSpan = 5;
+        loadingCell.style.cssText = [
+          "padding:2px 0",
+          "color:#9ca3af",
+          "font:12px/1.2 Arial,sans-serif",
+          "text-align:center"
+        ].join(";");
+        loadingCell.textContent = "loading...";
+        row.appendChild(loadingCell);
+      } else {
+        const values = [
+          { text: fmtHudNum(stats.vpip_percentage, 2), color: HUD_STAT_BADGE_COLORS.vpip, title: "VPIP" },
+          { text: fmtHudNum(stats.pfr_percentage, 2), color: HUD_STAT_BADGE_COLORS.pfr, title: "PFR" },
+          { text: fmtHudNum(stats.three_bet_percentage, 2), color: HUD_STAT_BADGE_COLORS.threeBet, title: "3B" },
+          { text: fmtHudNum(stats.af, 2), color: HUD_STAT_BADGE_COLORS.af, title: "AF" },
+          { text: String(toNum(stats.hands, 0)), color: HUD_STAT_BADGE_COLORS.hands, title: "Hands" }
+        ];
+        values.forEach((item) => {
+          const statCell = document.createElement("td");
+          statCell.style.cssText = [
+            "padding:2px 0",
+            "width:12.4%",
+            "text-align:center",
+            "vertical-align:top"
+          ].join(";");
+          statCell.appendChild(makeHudBadge(item.text, item.color, item.title));
+          row.appendChild(statCell);
+        });
+      }
       table.appendChild(row);
     });
 
@@ -482,7 +505,7 @@
     badge.style.cssText = [
       "display:inline-block",
       "padding:2px 6px",
-      "margin:0 4px 4px 0",
+      "margin:0",
       "border-radius:5px",
       "background:" + backgroundColor,
       "color:#ffffff",
@@ -667,6 +690,34 @@
       toggleBtn.style.opacity = tablePlayersOverlayHidden ? "0.75" : "1";
       el.style.display = tablePlayersOverlayHidden ? "none" : "block";
 
+      const trackingToggleId = "poker-tracker-tracking-toggle";
+      let trackingBtn = document.getElementById(trackingToggleId);
+      if (!trackingBtn) {
+        trackingBtn = document.createElement("button");
+        trackingBtn.id = trackingToggleId;
+        trackingBtn.type = "button";
+        trackingBtn.style.cssText = [
+          "position:fixed",
+          "top:calc(50% - 220px)",
+          "right:84px",
+          "z-index:2147483647",
+          "border:1px solid #22c55e",
+          "border-radius:6px",
+          "padding:6px 12px",
+          "font:700 12px/1 Arial,sans-serif",
+          "letter-spacing:.06em",
+          "cursor:pointer",
+          "pointer-events:auto",
+          "box-shadow:0 3px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06)"
+        ].join(";");
+        trackingBtn.addEventListener("click", function() {
+          trackingEnabled = !trackingEnabled;
+          applyTrackingToggleStyle(this);
+        });
+        document.documentElement.appendChild(trackingBtn);
+      }
+      applyTrackingToggleStyle(trackingBtn);
+
       if (!activeSeatIndexes.length) {
         setCurrentTablePlayerNames([]);
         el.textContent = "-";
@@ -689,6 +740,7 @@
   }
 
   async function sendAction(entry) {
+    if (!trackingEnabled) return;
     const payload = JSON.stringify(entry);
     //console.log("[tracker] POST " + API_URL, payload);
     try {
@@ -698,6 +750,21 @@
         body: payload
       });
     } catch (e) {}
+  }
+
+  function applyTrackingToggleStyle(btn) {
+    if (!btn) return;
+    if (trackingEnabled) {
+      btn.style.background = "linear-gradient(180deg,#16a34a,#15803d)";
+      btn.style.borderColor = "#22c55e";
+      btn.style.color = "#f0fdf4";
+      btn.textContent = "REC ON";
+    } else {
+      btn.style.background = "linear-gradient(180deg,#374151,#1f2937)";
+      btn.style.borderColor = "#6b7280";
+      btn.style.color = "#e5e7eb";
+      btn.textContent = "REC OFF";
+    }
   }
 
   function trackStreetPressure(action, seatIdx, amount, activeSeatIndexes) {
