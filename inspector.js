@@ -1,12 +1,12 @@
-// === POKER HAND TRACKER v8.2 ===
+// === POKER HAND TRACKER v8.4 ===
 
 (function() {
   "use strict";
 
-  const TRACKER_VERSION = "v8.2";
+  const TRACKER_VERSION = "v8.4";
   const API_URL = "https://team.evlog.ge/api/hand-history";
   const HUD_STATS_API_URL = "https://team.evlog.ge/api/hand-history/hud-stats";
-  const HUD_STATS_REFRESH_MS = 60 * 1000;
+  const HUD_STATS_REFRESH_MS = 3 * 60 * 1000;
   const DEBUG_HUD_STATS = false;
   const HUD_STAT_BADGE_COLORS = {
     vpip: "#22543d",
@@ -66,6 +66,8 @@
   let hudStatsFetchedAtByPlayerName = {};
   let hudStatsRequestInFlight = false;
   let hudStatsLoopTimer = null;
+  let hudCountdownTimer = null;
+  let nextHudReloadAt = 0;
   const seenUnknownLa = new Set();
   let seenSanityWarningKeys = new Set();
 
@@ -367,14 +369,177 @@
     console.log("[tracker][hud] " + message);
   }
 
+  function ensureHudSpinnerKeyframes() {
+    if (document.getElementById("poker-tracker-hud-spinner-style")) return;
+    const style = document.createElement("style");
+    style.id = "poker-tracker-hud-spinner-style";
+    style.textContent =
+      "@keyframes poker-tracker-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }";
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function setHudLoadingOverlay(visible) {
+    const host = document.getElementById("poker-tracker-table-players-overlay");
+    if (!host) return;
+    const overlayId = "poker-tracker-hud-loading-overlay";
+    let overlay = document.getElementById(overlayId);
+    if (!visible) {
+      if (overlay) overlay.remove();
+      return;
+    }
+    ensureHudSpinnerKeyframes();
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = overlayId;
+      overlay.style.cssText = [
+        "position:absolute",
+        "inset:0",
+        "display:flex",
+        "flex-direction:column",
+        "align-items:center",
+        "justify-content:center",
+        "gap:10px",
+        "background:rgba(17,24,39,0.55)",
+        "backdrop-filter:blur(2px)",
+        "-webkit-backdrop-filter:blur(2px)",
+        "border-radius:8px",
+        "z-index:2",
+        "pointer-events:auto",
+        "color:#f9fafb",
+        "font:600 12px/1.2 Arial,sans-serif",
+        "letter-spacing:.06em",
+        "text-transform:uppercase"
+      ].join(";");
+
+      const spinner = document.createElement("div");
+      spinner.style.cssText = [
+        "width:28px",
+        "height:28px",
+        "border-radius:50%",
+        "border:3px solid rgba(255,255,255,0.18)",
+        "border-top-color:#22c55e",
+        "animation:poker-tracker-spin .8s linear infinite"
+      ].join(";");
+      overlay.appendChild(spinner);
+
+      const label = document.createElement("div");
+      label.textContent = "Loading stats...";
+      overlay.appendChild(label);
+
+      host.appendChild(overlay);
+    }
+  }
+
+  async function forceRefreshHudStats() {
+    if (hudStatsRequestInFlight) return;
+    const players = currentTablePlayerNames.slice();
+    if (!players.length) return;
+    players.forEach((name) => {
+      delete hudStatsFetchedAtByPlayerName[name];
+    });
+    debugHudStatsLog("manual refresh", players);
+    setHudLoadingOverlay(true);
+    try {
+      await requestHudStats(players, "manual_refresh", true);
+    } finally {
+      setHudLoadingOverlay(false);
+      restartHudStatsLoop();
+      updateHudCountdownDisplay();
+    }
+  }
+
+  function buildHudReloadButton() {
+    const btn = document.createElement("button");
+    btn.id = "poker-tracker-hud-reload";
+    btn.type = "button";
+    btn.title = "Refresh stats";
+    btn.style.cssText = [
+      "display:inline-flex",
+      "align-items:center",
+      "justify-content:center",
+      "width:22px",
+      "height:22px",
+      "padding:0",
+      "border:1px solid #22c55e",
+      "border-radius:4px",
+      "background:linear-gradient(180deg,#1f2937,#111827)",
+      "color:#f8fafc",
+      "font:700 14px/1 Arial,sans-serif",
+      "cursor:pointer",
+      "pointer-events:auto",
+      "user-select:none",
+      "box-shadow:0 2px 6px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.06)"
+    ].join(";");
+    btn.textContent = "\u21bb";
+    btn.addEventListener("click", function(ev) {
+      ev.stopPropagation();
+      if (hudStatsRequestInFlight) return;
+      const original = this.textContent;
+      this.disabled = true;
+      this.style.opacity = "0.6";
+      this.textContent = "\u22ef";
+      forceRefreshHudStats().finally(() => {
+        this.disabled = false;
+        this.style.opacity = "1";
+        this.textContent = original;
+      });
+    });
+    return btn;
+  }
+
   function renderHudOverlayFromCurrentState() {
     const el = document.getElementById("poker-tracker-table-players-overlay");
     if (!el) return;
+    el.replaceChildren();
+
+    const headerBar = document.createElement("div");
+    headerBar.style.cssText = [
+      "display:flex",
+      "align-items:center",
+      "justify-content:space-between",
+      "margin:0 0 6px 0",
+      "gap:8px",
+      "pointer-events:auto"
+    ].join(";");
+    const title = document.createElement("span");
+    title.textContent = "HUD Stats";
+    title.style.cssText = [
+      "font:700 11px/1.2 Arial,sans-serif",
+      "letter-spacing:.06em",
+      "text-transform:uppercase",
+      "color:#9ca3af"
+    ].join(";");
+    const rightGroup = document.createElement("div");
+    rightGroup.style.cssText = [
+      "display:flex",
+      "align-items:center",
+      "gap:6px",
+      "pointer-events:auto"
+    ].join(";");
+
+    const countdown = document.createElement("span");
+    countdown.id = "poker-tracker-hud-countdown";
+    countdown.title = "Time until next auto-refresh";
+    countdown.style.cssText = [
+      "font:600 11px/1.2 Consolas,Monaco,'Courier New',monospace",
+      "color:#9ca3af",
+      "min-width:34px",
+      "text-align:right"
+    ].join(";");
+    rightGroup.appendChild(countdown);
+    rightGroup.appendChild(buildHudReloadButton());
+
+    headerBar.appendChild(title);
+    headerBar.appendChild(rightGroup);
+    el.appendChild(headerBar);
+    updateHudCountdownDisplay();
+
     if (!currentTablePlayerNames.length) {
-      el.textContent = "-";
+      const empty = document.createElement("div");
+      empty.textContent = "-";
+      el.appendChild(empty);
       return;
     }
-    el.replaceChildren();
 
     const table = document.createElement("table");
     table.style.cssText = [
@@ -625,12 +790,52 @@
 
   function startHudStatsLoop() {
     if (hudStatsLoopTimer) return;
+    nextHudReloadAt = Date.now() + HUD_STATS_REFRESH_MS;
     hudStatsLoopTimer = setInterval(() => {
-      runHudStatsLoopTick().catch(() => {});
+      nextHudReloadAt = Date.now() + HUD_STATS_REFRESH_MS;
+      forceRefreshHudStats().catch(() => {});
     }, HUD_STATS_REFRESH_MS);
     runHudStatsLoopTick().catch(() => {});
   }
+
+  function restartHudStatsLoop() {
+    if (hudStatsLoopTimer) {
+      clearInterval(hudStatsLoopTimer);
+      hudStatsLoopTimer = null;
+    }
+    startHudStatsLoop();
+  }
+
+  function formatCountdown(ms) {
+    const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return minutes + ":" + String(seconds).padStart(2, "0");
+  }
+
+  function updateHudCountdownDisplay() {
+    const el = document.getElementById("poker-tracker-hud-countdown");
+    if (!el) return;
+    const remaining = nextHudReloadAt - Date.now();
+    el.textContent = "(" + formatCountdown(remaining) + ")";
+  }
+
+  function startHudCountdownTicker() {
+    if (hudCountdownTimer) return;
+    hudCountdownTimer = setInterval(updateHudCountdownDisplay, 1000);
+  }
   startHudStatsLoop();
+  startHudCountdownTicker();
+
+  // Background tabs throttle timers, so the interval can drift or stall while hidden.
+  // When the tab becomes visible again, run an overdue refresh immediately.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    updateHudCountdownDisplay();
+    if (Date.now() >= nextHudReloadAt) {
+      forceRefreshHudStats().catch(() => {});
+    }
+  });
 
   function updateTablePlayersOverlay(gs, activeSeatIndexes) {
     try {
@@ -657,10 +862,10 @@
           "min-width:260px",
           "max-width:320px",
           "max-height:70vh",
-          "overflow-y:auto",
-          "overflow-x:hidden",
+          "overflow:hidden",
           "white-space:pre-wrap",
-          "word-break:break-word"
+          "word-break:break-word",
+          "isolation:isolate"
         ].join(";");
         document.documentElement.appendChild(el);
       }
