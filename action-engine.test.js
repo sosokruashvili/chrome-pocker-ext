@@ -376,6 +376,27 @@ check(
   ]
 );
 
+const normalized = engine.normalizeHand({
+  handId: 1,
+  snapshots: [
+    snap(2, 0, [
+      { idx: 0, name: "UTG", la: 9, b: 2 },
+      { idx: 1, name: "UTG2", la: 1 },
+      { idx: 2, name: "BTN", la: 1 },
+      { idx: 3, name: "SB", la: 1 },
+      { idx: 4, name: "BB", la: 1 }
+    ])
+  ]
+}).map((entry) => entry.position + " " + entry.round + " " + entry.action);
+check("normalize batch", normalized, [
+  "UTG preflop raise",
+  "UTG2 preflop fold",
+  "BTN preflop fold",
+  "SB preflop fold",
+  "BB preflop fold",
+  "UTG preflop win_fold"
+]);
+
 if (failed) {
   console.error(failed + " failed");
   process.exit(1);

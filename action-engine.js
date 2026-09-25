@@ -1,4 +1,4 @@
-// Decides which actions are legal to POST for one hand.
+// Server-side hand normalizer. The extension posts raw snapshots; this builds the stored actions.
 // Seats are released in poker order. A street is closed before the next one starts.
 (function (root, factory) {
   const api = factory();
@@ -375,9 +375,26 @@
     return out;
   }
 
+  function normalizeHand(body) {
+    const hand = createHand();
+    const actions = [];
+    const snaps = body && Array.isArray(body.snapshots) ? body.snapshots : [];
+    snaps.forEach((snap) => {
+      applySnapshot(hand, {
+        dealerIdx: snap.dealerIdx,
+        boardCount: snap.boardCount,
+        seats: snap.seats || []
+      }).forEach((action) => {
+        actions.push(action);
+      });
+    });
+    return actions;
+  }
+
   return {
     createHand: createHand,
     applySnapshot: applySnapshot,
+    normalizeHand: normalizeHand,
     positionName: positionName,
     roundFromBoard: roundFromBoard
   };

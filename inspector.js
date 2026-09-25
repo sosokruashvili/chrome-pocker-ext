@@ -1,10 +1,11 @@
-// === POKER HAND TRACKER v8.5 ===
+// === POKER HAND TRACKER v8.8 ===
 
 (function() {
   "use strict";
 
-  const TRACKER_VERSION = "v8.5";
+  const TRACKER_VERSION = "v8.8";
   const API_URL = "https://team.evlog.ge/api/hand-history";
+  const RAW_HAND_API_URL = API_URL + "/raw";
   const HUD_STATS_API_URL = "https://team.evlog.ge/api/hand-history/hud-stats";
   const HUD_STATS_REFRESH_MS = 3 * 60 * 1000;
   const DEBUG_HUD_STATS = false;
@@ -56,7 +57,7 @@
   let lastActionRoundBySeat = {};
   let lastEmitSignatureBySeat = {};
   let handActions = [];
-  let actionHand = null;
+  const rawRecorder = PokerSnapshotRecorder.createRecorder();
   let playerNameBySeat = {};
   let tablePlayersOverlayHidden = true;
   let trackingEnabled = false;
@@ -195,7 +196,6 @@
     lastActionRoundBySeat = {};
     lastEmitSignatureBySeat = {};
     handActions = [];
-    actionHand = null;
     playerNameBySeat = {};
     seenSanityWarningKeys = new Set();
     console.log("%c[tracker] ===== NEW HAND " + handId + " =====", "color:#22c55e;font-weight:bold;");
@@ -953,6 +953,7 @@
         trackingSwitch.setAttribute("role", "switch");
         trackingSwitch.addEventListener("click", function() {
           if (trackingEnabled) {
+            flushRawHand();
             trackingEnabled = false;
             trackingSendActive = false;
             pendingTrackingArm = false;
@@ -1011,6 +1012,44 @@
     return Object.keys(streetPendingResponseBySeat)
       .map((key) => Number(key))
       .filter((seatIdx) => !!streetPendingResponseBySeat[seatIdx] && seatIdx !== excludeSeatIdx && isSeatMeaningfulPending(seatIdx));
+  }
+
+  function recordSnapshot(handId, boardCount, dealerIdx, gs) {
+    if (!trackingEnabled || !trackingSendActive) return;
+    const seats = [];
+    for (let i = 0; i < gs.s.length; i += 1) {
+      const seat = gs.s[i];
+      if (!seat) continue;
+      const playerName = seat.dn || seat.n;
+      if (!playerName) continue;
+      playerNameBySeat[i] = playerName;
+      seats.push({
+        idx: i,
+        name: playerName,
+        la: toNum(seat.la, null),
+        b: toNum(seat.b, 0),
+        stack: toNum(seat.s, null)
+      });
+    }
+    if (!seats.length) return;
+    const result = rawRecorder.add(handId, boardCount, dealerIdx, seats);
+    if (result && result.done) flushRawHand();
+  }
+
+  function flushRawHand() {
+    if (!trackingEnabled || !trackingSendActive) return;
+    const hand = rawRecorder.flush();
+    if (!hand) return;
+    const payload = JSON.stringify(hand);
+    console.log("[tracker] POST raw hand " + hand.handId + " (" + hand.snapshots.length + " snapshots)");
+    try {
+      fetch(RAW_HAND_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: true
+      }).catch(() => {});
+    } catch (e) {}
   }
 
   async function sendAction(entry) {
@@ -1207,6 +1246,7 @@
     const handId = gs.gi;
     const boardCount = getBoardCount(gs);
     if (handId !== currentHandId) {
+      flushRawHand();
       resetHandState(handId, boardCount);
     }
     const effectiveBoardCount = Math.max(boardCount, previousBoardCount);
@@ -1230,41 +1270,11 @@
         lockedPositionBySeat[idx] = getPositionName(idx, dealerIdx, activeSeatIndexes);
       });
     }
-    if (!actionHand && typeof PokerActionEngine !== "undefined") {
-      actionHand = PokerActionEngine.createHand();
-    }
-    if (actionHand) {
-      const engineSeats = [];
-      for (let i = 0; i < gs.s.length; i += 1) {
-        const seat = gs.s[i];
-        if (!seat) continue;
-        const playerName = seat.dn || seat.n;
-        if (!playerName) continue;
-        playerNameBySeat[i] = playerName;
-        engineSeats.push({
-          idx: i,
-          name: playerName,
-          la: toNum(seat.la, null),
-          b: toNum(seat.b, 0),
-          stack: toNum(seat.s, null)
-        });
-      }
-      const emitted = PokerActionEngine.applySnapshot(actionHand, {
-        dealerIdx: dealerIdx,
-        boardCount: effectiveBoardCount,
-        seats: engineSeats
-      });
-      emitted.forEach((action) => {
-        const entry = buildEntry(handId, action.player, action.position, action.round, action.action, action.amount || 0);
-        handActions.push(entry);
-        console.log("[tracker] " + formatLogRow(action.player, action.position, action.round, action.action));
-        sendAction(entry);
-      });
-      updateTablePlayersOverlay(gs, activeSeatIndexes);
-      previousBoardCount = effectiveBoardCount;
-      previousRound = roundNow;
-      return;
-    }
+    recordSnapshot(handId, effectiveBoardCount, dealerIdx, gs);
+    updateTablePlayersOverlay(gs, activeSeatIndexes);
+    previousBoardCount = effectiveBoardCount;
+    previousRound = roundNow;
+    return;
 
     let snapshotPrevMaxB = 0;
     Object.keys(seatState).forEach((key) => {
@@ -1743,7 +1753,11 @@
   window.WebSocket.CLOSING = 2;
   window.WebSocket.CLOSED = 3;
 
+  window.addEventListener("pagehide", flushRawHand);
+
   window._pokerActions = function() {
-    console.table(handActions);
+    const hand = rawRecorder.peek();
+    if (hand) console.table(hand.snapshots);
+    return hand;
   };
 })();
