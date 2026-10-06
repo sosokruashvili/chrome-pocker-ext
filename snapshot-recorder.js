@@ -138,36 +138,43 @@
       return { done: false };
     }
 
+    function actedSeatIndexes(snapshots) {
+      const acted = new Set();
+      snapshots.forEach((snap) => {
+        snap.seats.forEach((seat) => {
+          if (seat.la !== null && seat.la !== undefined) acted.add(seat.idx);
+        });
+      });
+      return acted;
+    }
+
+    function publish(hand) {
+      const acted = actedSeatIndexes(hand.snapshots);
+      return {
+        handId: hand.handId,
+        snapshots: hand.snapshots.map((snap) => ({
+          seq: snap.seq,
+          boardCount: snap.boardCount,
+          dealerIdx: snap.dealerIdx,
+          seats: snap.seats.filter((seat) => acted.has(seat.idx))
+        }))
+      };
+    }
+
     function flush() {
       if (!current || !current.snapshots.length || sent.has(current.handId)) {
         current = null;
         return null;
       }
       sent.add(current.handId);
-      const payload = {
-        handId: current.handId,
-        snapshots: current.snapshots.map((snap) => ({
-          seq: snap.seq,
-          boardCount: snap.boardCount,
-          dealerIdx: snap.dealerIdx,
-          seats: snap.seats
-        }))
-      };
+      const payload = publish(current);
       current = null;
       return payload;
     }
 
     function peek() {
       if (!current) return null;
-      return {
-        handId: current.handId,
-        snapshots: current.snapshots.map((snap) => ({
-          seq: snap.seq,
-          boardCount: snap.boardCount,
-          dealerIdx: snap.dealerIdx,
-          seats: snap.seats
-        }))
-      };
+      return publish(current);
     }
 
     return { add: add, flush: flush, peek: peek };

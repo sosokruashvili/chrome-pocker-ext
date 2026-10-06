@@ -80,6 +80,34 @@ check("tail is not a new post", third, null);
 check("winner kept in the only post", first.snapshots[2].seats[0].la, 16);
 check("pot stays on the winner", first.snapshots[2].seats[0].b, 3);
 
+const sittingOut = createRecorder();
+sittingOut.add(5, 0, 0, [
+  { idx: 0, name: "Kuka23", la: null, b: 0, stack: 100 },
+  { idx: 1, name: "SB", la: 7, b: 1, stack: 99 },
+  { idx: 2, name: "BB", la: 4, b: 2, stack: 98 },
+  { idx: 3, name: "UTG", la: 1, b: 0, stack: 100 }
+]);
+sittingOut.add(5, 3, 0, [
+  { idx: 0, name: "Kuka23", la: null, b: 0, stack: 100 },
+  { idx: 1, name: "SB", la: 2, b: 0, stack: 99 },
+  { idx: 2, name: "BB", la: 2, b: 0, stack: 98 },
+  { idx: 3, name: "UTG", la: 1, b: 0, stack: 100 }
+]);
+const withoutEmpty = sittingOut.flush();
+check("sitting out seat omitted", las(withoutEmpty), [
+  "0:SB=7@1,BB=4@2,UTG=1@0",
+  "3:SB=null@0,BB=null@0,UTG=null@0",
+  "3:SB=2@0,BB=2@0,UTG=1@0"
+]);
+check("empty seat absent from every snapshot", withoutEmpty.snapshots.every((snap) => snap.seats.every((seat) => seat.name !== "Kuka23")), true);
+
+const postedBlind = createRecorder();
+postedBlind.add(6, 0, 1, [
+  { idx: 0, name: "Away", la: null, b: 0, stack: 50 },
+  { idx: 1, name: "SB", la: 6, b: 1, stack: 49 }
+]);
+check("blind post is kept", postedBlind.flush().snapshots[0].seats.map((seat) => seat.name), ["SB"]);
+
 if (failed) {
   console.error(failed + " failed");
   process.exit(1);
