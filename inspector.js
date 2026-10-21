@@ -1,9 +1,9 @@
-// === POKER HAND TRACKER v8.9 ===
+// === POKER HAND TRACKER v9.0 ===
 
 (function() {
   "use strict";
 
-  const TRACKER_VERSION = "v8.9";
+  const TRACKER_VERSION = "v9.0";
   const API_URL = "https://team.evlog.ge/api/hand-history";
   const RAW_HAND_API_URL = API_URL + "/raw";
   const HUD_STATS_API_URL = "https://team.evlog.ge/api/hand-history/hud-stats";
@@ -70,6 +70,8 @@
   let hudStatsLoopTimer = null;
   let hudCountdownTimer = null;
   let nextHudReloadAt = 0;
+  let seatHudFrame = 0;
+  const seatHudBySeat = new Map();
   const seenUnknownLa = new Set();
   let seenSanityWarningKeys = new Set();
 
@@ -490,150 +492,7 @@
   }
 
   function renderHudOverlayFromCurrentState() {
-    const el = document.getElementById("poker-tracker-table-players-overlay");
-    if (!el) return;
-    el.replaceChildren();
-
-    const headerBar = document.createElement("div");
-    headerBar.style.cssText = [
-      "display:flex",
-      "align-items:center",
-      "justify-content:space-between",
-      "margin:0 0 6px 0",
-      "gap:8px",
-      "pointer-events:auto"
-    ].join(";");
-    const title = document.createElement("span");
-    title.textContent = "HUD Stats";
-    title.style.cssText = [
-      "font:700 11px/1.2 Arial,sans-serif",
-      "letter-spacing:.06em",
-      "text-transform:uppercase",
-      "color:#9ca3af"
-    ].join(";");
-    const rightGroup = document.createElement("div");
-    rightGroup.style.cssText = [
-      "display:flex",
-      "align-items:center",
-      "gap:6px",
-      "pointer-events:auto"
-    ].join(";");
-
-    const countdown = document.createElement("span");
-    countdown.id = "poker-tracker-hud-countdown";
-    countdown.title = "Time until next auto-refresh";
-    countdown.style.cssText = [
-      "font:600 11px/1.2 Consolas,Monaco,'Courier New',monospace",
-      "color:#9ca3af",
-      "min-width:34px",
-      "text-align:right"
-    ].join(";");
-    rightGroup.appendChild(countdown);
-    rightGroup.appendChild(buildHudReloadButton());
-
-    headerBar.appendChild(title);
-    headerBar.appendChild(rightGroup);
-    el.appendChild(headerBar);
-    updateHudCountdownDisplay();
-
-    if (!currentTablePlayerNames.length) {
-      const empty = document.createElement("div");
-      empty.textContent = "-";
-      el.appendChild(empty);
-      return;
-    }
-
-    const table = document.createElement("table");
-    table.style.cssText = [
-      "width:100%",
-      "border-collapse:collapse",
-      "table-layout:fixed",
-      "font:14px/1.35 Consolas,Monaco,'Courier New',monospace"
-    ].join(";");
-
-    const headerRow = document.createElement("tr");
-    const playerHeader = document.createElement("th");
-    playerHeader.style.cssText = [
-      "padding:0 4px 6px 0",
-      "width:38%",
-      "font:600 11px/1.2 Arial,sans-serif",
-      "letter-spacing:.04em",
-      "text-transform:uppercase",
-      "color:#9ca3af",
-      "white-space:nowrap",
-      "text-align:left"
-    ].join(";");
-    playerHeader.textContent = "Player";
-    headerRow.appendChild(playerHeader);
-    ["VPIP", "PFR", "3B", "AF", "H"].forEach((label) => {
-      const statHeader = document.createElement("th");
-      statHeader.style.cssText = [
-        "padding:0 0 6px 0",
-        "width:12.4%",
-        "font:600 11px/1.2 Arial,sans-serif",
-        "letter-spacing:.04em",
-        "text-transform:uppercase",
-        "color:#9ca3af",
-        "white-space:nowrap",
-        "text-align:center"
-      ].join(";");
-      statHeader.textContent = label;
-      headerRow.appendChild(statHeader);
-    });
-    table.appendChild(headerRow);
-
-    currentTablePlayerNames.forEach((name) => {
-      const row = document.createElement("tr");
-
-      const playerCell = document.createElement("td");
-      playerCell.style.cssText = [
-        "padding:2px 0px 2px 0",
-        "width:38%",
-        "white-space:nowrap",
-        "overflow:hidden",
-        "text-overflow:ellipsis",
-        "vertical-align:top",
-        "color:#f9fafb"
-      ].join(";");
-      playerCell.textContent = name;
-      row.appendChild(playerCell);
-
-      const stats = hudStatsByPlayerName[name];
-      if (!hasCompleteHudStats(stats)) {
-        const loadingCell = document.createElement("td");
-        loadingCell.colSpan = 5;
-        loadingCell.style.cssText = [
-          "padding:2px 0",
-          "color:#9ca3af",
-          "font:12px/1.2 Arial,sans-serif",
-          "text-align:center"
-        ].join(";");
-        loadingCell.textContent = "loading...";
-        row.appendChild(loadingCell);
-      } else {
-        const values = [
-          { text: fmtHudNum(stats.vpip_percentage, 2), color: HUD_STAT_BADGE_COLORS.vpip, title: "VPIP" },
-          { text: fmtHudNum(stats.pfr_percentage, 2), color: HUD_STAT_BADGE_COLORS.pfr, title: "PFR" },
-          { text: fmtHudNum(stats.three_bet_percentage, 2), color: HUD_STAT_BADGE_COLORS.threeBet, title: "3B" },
-          { text: fmtHudNum(stats.af, 2), color: HUD_STAT_BADGE_COLORS.af, title: "AF" },
-          { text: String(toNum(stats.hands, 0)), color: HUD_STAT_BADGE_COLORS.hands, title: "Hands" }
-        ];
-        values.forEach((item) => {
-          const statCell = document.createElement("td");
-          statCell.style.cssText = [
-            "padding:2px 0",
-            "width:12.4%",
-            "text-align:center",
-            "vertical-align:top"
-          ].join(";");
-          statCell.appendChild(makeHudBadge(item.text, item.color, item.title));
-          row.appendChild(statCell);
-        });
-      }
-      table.appendChild(row);
-    });
-
-    el.appendChild(table);
+    markSeatHudsDirty();
   }
 
   function setCurrentTablePlayerNames(names) {
@@ -674,19 +533,72 @@
     const pfr = fmtHudNum(stats.pfr_percentage, 2);
     const af = fmtHudNum(stats.af, 2);
     const threeBet = fmtHudNum(stats.three_bet_percentage, 2);
-    return vpip + " | " + pfr + " | " + threeBet + " | " + af + " | " + hands;
+    return vpip + " | " + pfr + " | " + af + " | " + threeBet + " | " + hands;
   }
 
-  function makeHudBadge(text, backgroundColor, title) {
+  function hudVisualScale() {
+    const dpr = window.devicePixelRatio || 1;
+    const screenW = window.screen && window.screen.width ? window.screen.width : 0;
+    const screenH = window.screen && window.screen.height ? window.screen.height : 0;
+    const physical = Math.max(screenW, screenH) * dpr;
+    const css = Math.max(window.innerWidth || 0, window.innerHeight || 0, screenW, screenH);
+    const basis = Math.max(physical, css);
+    return Math.min(2, Math.max(1, basis / 1920));
+  }
+
+  const HUD_SIZE_STORAGE_KEY = "poker-tracker-hud-size";
+  let hudSizeLevel = 0;
+  try {
+    const storedSize = Number(localStorage.getItem(HUD_SIZE_STORAGE_KEY));
+    if (Number.isFinite(storedSize)) hudSizeLevel = Math.max(-4, Math.min(8, Math.round(storedSize)));
+  } catch (e) {}
+
+  function hudUserScale() {
+    return 1 + hudSizeLevel * 0.1;
+  }
+
+  function saveHudSize() {
+    try {
+      localStorage.setItem(HUD_SIZE_STORAGE_KEY, String(hudSizeLevel));
+    } catch (e) {}
+  }
+
+  function changeHudSize(delta) {
+    const next = Math.max(-4, Math.min(8, hudSizeLevel + delta));
+    if (next === hudSizeLevel) return;
+    hudSizeLevel = next;
+    saveHudSize();
+    markSeatHudsDirty();
+  }
+
+  function hudMetrics() {
+    const screenScale = hudVisualScale();
+    const userScale = hudUserScale();
+    const grow = (value) => Math.max(1, Math.round(value * userScale));
+    return {
+      scale: Math.round(screenScale * userScale * 100) / 100,
+      font: grow(Math.round(11 * screenScale)),
+      padY: grow(Math.max(1, Math.round(1 * screenScale)) + 2),
+      padX: grow(Math.max(2, Math.round(2 * screenScale)) + 2),
+      gap: grow(Math.max(2, Math.round(2 * screenScale))),
+      radius: grow(Math.max(3, Math.round(3 * screenScale))),
+      offset: Math.max(2, Math.round(2 * screenScale)),
+      stripPadY: grow(Math.max(1, Math.round(1 * screenScale)) + 2),
+      stripPadX: grow(Math.max(2, Math.round(2 * screenScale)) + 2)
+    };
+  }
+
+  function makeHudBadge(text, backgroundColor, title, metrics) {
     const badge = document.createElement("span");
     badge.style.cssText = [
       "display:inline-block",
-      "padding:2px 6px",
+      "padding:" + metrics.padY + "px " + metrics.padX + "px",
       "margin:0",
-      "border-radius:5px",
+      "border-radius:" + metrics.radius + "px",
       "background:" + backgroundColor,
+      "box-shadow:0 0 0 1px rgba(0,0,0,0.45)",
       "color:#ffffff",
-      "font:600 12px/1.2 Arial,sans-serif",
+      "font:700 " + metrics.font + "px/1.15 Arial,sans-serif",
       "white-space:nowrap"
     ].join(";");
     badge.textContent = text;
@@ -694,11 +606,41 @@
     return badge;
   }
 
-  function renderHudStatBadges(container, playerName) {
+  function statsForPlayerName(playerName) {
+    if (hudStatsByPlayerName[playerName]) return hudStatsByPlayerName[playerName];
+    const lower = String(playerName || "").toLowerCase();
+    const key = Object.keys(hudStatsByPlayerName).find((name) => name.toLowerCase() === lower);
+    return key ? hudStatsByPlayerName[key] : null;
+  }
+
+  function makeHudNameLabel(playerName, metrics) {
+    const label = document.createElement("span");
+    label.className = "poker-tracker-seat-hud-name";
+    label.style.cssText = [
+      "display:inline-block",
+      "padding:" + metrics.padY + "px " + metrics.padX + "px",
+      "border-radius:" + metrics.radius + "px",
+      "background:transparent",
+      "color:#f9fafb",
+      "font:700 " + metrics.font + "px/1.15 Arial,sans-serif",
+      "white-space:nowrap"
+    ].join(";");
+    label.textContent = String(playerName || "").slice(0, 2);
+    return label;
+  }
+
+  function renderHudStatBadges(container, playerName, metrics) {
+    const style = metrics || hudMetrics();
     container.replaceChildren();
-    const stats = hudStatsByPlayerName[playerName];
+    container.style.color = "";
+    container.style.font = "";
+    container.appendChild(makeHudNameLabel(playerName, style));
+    const stats = statsForPlayerName(playerName);
     if (!hasCompleteHudStats(stats)) {
-      container.textContent = "loading...";
+      const waiting = document.createElement("span");
+      waiting.textContent = "...";
+      waiting.style.cssText = "color:#9ca3af;font:700 " + style.font + "px/1.15 Arial,sans-serif;";
+      container.appendChild(waiting);
       return;
     }
 
@@ -708,11 +650,11 @@
     const af = fmtHudNum(stats.af, 2);
     const hands = String(toNum(stats.hands, 0));
 
-    container.appendChild(makeHudBadge(vpip, HUD_STAT_BADGE_COLORS.vpip, "VPIP"));
-    container.appendChild(makeHudBadge(pfr, HUD_STAT_BADGE_COLORS.pfr, "PFR"));
-    container.appendChild(makeHudBadge(threeBet, HUD_STAT_BADGE_COLORS.threeBet, "3B"));
-    container.appendChild(makeHudBadge(af, HUD_STAT_BADGE_COLORS.af, "AF"));
-    container.appendChild(makeHudBadge(hands, HUD_STAT_BADGE_COLORS.hands, "Hands"));
+    container.appendChild(makeHudBadge(vpip, HUD_STAT_BADGE_COLORS.vpip, "VPIP", style));
+    container.appendChild(makeHudBadge(pfr, HUD_STAT_BADGE_COLORS.pfr, "PFR", style));
+    container.appendChild(makeHudBadge(af, HUD_STAT_BADGE_COLORS.af, "AF", style));
+    container.appendChild(makeHudBadge(threeBet, HUD_STAT_BADGE_COLORS.threeBet, "3B", style));
+    container.appendChild(makeHudBadge(hands, HUD_STAT_BADGE_COLORS.hands, "Hands", style));
   }
 
   async function requestHudStats(playerNames, reason, allowMissingRetry) {
@@ -832,45 +774,277 @@
   // Background tabs throttle timers, so the interval can drift or stall while hidden.
   // When the tab becomes visible again, run an overdue refresh immediately.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible") return;
+    if (document.visibilityState !== "visible") {
+      ensureSeatHudLoop();
+      return;
+    }
     updateHudCountdownDisplay();
+    ensureSeatHudLoop();
     if (Date.now() >= nextHudReloadAt) {
       forceRefreshHudStats().catch(() => {});
     }
   });
 
+  function collectDomSeatNames() {
+    const names = [];
+    document.querySelectorAll(".r-seat .bar-text.player-name").forEach((el) => {
+      const name = String(el.textContent || "").replace(/\s+/g, " ").trim();
+      if (name) names.push(name);
+    });
+    return normalizePlayerNames(names);
+  }
+
+  function ensureSeatHudLayer() {
+    let layer = document.getElementById("poker-tracker-seat-hud-layer");
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.id = "poker-tracker-seat-hud-layer";
+      layer.style.cssText = [
+        "position:fixed",
+        "left:0",
+        "top:0",
+        "width:0",
+        "height:0",
+        "overflow:visible",
+        "z-index:2147483646",
+        "pointer-events:none"
+      ].join(";");
+      document.documentElement.appendChild(layer);
+    }
+    return layer;
+  }
+
+  function seatHudSignature(playerName, scale) {
+    const stats = statsForPlayerName(playerName);
+    if (!hasCompleteHudStats(stats)) return scale + "|" + playerName + "|loading";
+    return [
+      scale,
+      playerName,
+      stats.vpip_percentage,
+      stats.pfr_percentage,
+      stats.three_bet_percentage,
+      stats.af,
+      stats.hands
+    ].join("|");
+  }
+
+  function markSeatHudsDirty() {
+    seatHudBySeat.forEach((node) => {
+      node._sig = "";
+    });
+  }
+
+  const HUD_OFFSET_STORAGE_KEY = "poker-tracker-hud-offsets";
+  let hudOffsets = {};
+  try {
+    const storedOffsets = JSON.parse(localStorage.getItem(HUD_OFFSET_STORAGE_KEY) || "{}");
+    if (storedOffsets && typeof storedOffsets === "object") hudOffsets = storedOffsets;
+  } catch (e) {}
+  let hudDrag = null;
+
+  function saveHudOffsets() {
+    try {
+      localStorage.setItem(HUD_OFFSET_STORAGE_KEY, JSON.stringify(hudOffsets));
+    } catch (e) {}
+  }
+
+  function resetHudOffsets() {
+    hudOffsets = {};
+    hudDrag = null;
+    saveHudOffsets();
+  }
+
+  function seatHudAnchorKey(seatEl) {
+    const className = typeof seatEl.className === "string" ? seatEl.className : "";
+    const template = className.match(/seat-template-\d+/);
+    const scenes = document.querySelectorAll(".r-scene-container");
+    const scene = seatEl.closest(".r-scene-container");
+    const sceneIdx = scene ? Array.prototype.indexOf.call(scenes, scene) : 0;
+    return sceneIdx + ":" + (template ? template[0] : "seat");
+  }
+
+  function shownHudOffset(key, barW, barH) {
+    const saved = hudOffsets[key];
+    if (!saved) return { dx: 0, dy: 0 };
+    const width = saved.barW > 0 ? barW / saved.barW : 1;
+    const height = saved.barH > 0 ? barH / saved.barH : 1;
+    return {
+      dx: saved.dx * width,
+      dy: saved.dy * height
+    };
+  }
+
+  function bindSeatHudDrag(node) {
+    if (node._dragBound) return;
+    node._dragBound = true;
+    node.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      const key = node._seatKey;
+      if (!key) return;
+      const shown = shownHudOffset(key, node._barW || 1, node._barH || 1);
+      hudDrag = {
+        key: key,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        dx: shown.dx,
+        dy: shown.dy,
+        barW: node._barW || 1,
+        barH: node._barH || 1
+      };
+      node.style.cursor = "grabbing";
+      try { node.setPointerCapture(event.pointerId); } catch (err) {}
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    node.addEventListener("pointermove", (event) => {
+      if (!hudDrag || hudDrag.pointerId !== event.pointerId) return;
+      hudOffsets[hudDrag.key] = {
+        dx: hudDrag.dx + (event.clientX - hudDrag.startX),
+        dy: hudDrag.dy + (event.clientY - hudDrag.startY),
+        barW: hudDrag.barW,
+        barH: hudDrag.barH
+      };
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    const endDrag = (event) => {
+      if (!hudDrag || hudDrag.pointerId !== event.pointerId) return;
+      saveHudOffsets();
+      hudDrag = null;
+      node.style.cursor = "grab";
+    };
+    node.addEventListener("pointerup", endDrag);
+    node.addEventListener("pointercancel", endDrag);
+    node.addEventListener("dblclick", (event) => {
+      const key = node._seatKey;
+      if (!key || !hudOffsets[key]) return;
+      delete hudOffsets[key];
+      saveHudOffsets();
+      event.preventDefault();
+      event.stopPropagation();
+    });
+  }
+
+  function createSeatHudNode() {
+    const node = document.createElement("div");
+    node.className = "poker-tracker-seat-hud";
+    node.style.cssText = [
+      "position:fixed",
+      "z-index:2147483646",
+      "transform:translateX(-50%)",
+      "display:flex",
+      "align-items:center",
+      "gap:4px",
+      "pointer-events:auto",
+      "cursor:grab",
+      "touch-action:none",
+      "user-select:none",
+      "white-space:nowrap"
+    ].join(";");
+    bindSeatHudDrag(node);
+    return node;
+  }
+
+  function layoutSeatHuds() {
+    const layer = ensureSeatHudLayer();
+    if (tablePlayersOverlayHidden) {
+      layer.style.display = "none";
+      return;
+    }
+    layer.style.display = "block";
+
+    const live = new Set();
+    const names = [];
+    const metrics = hudMetrics();
+    document.querySelectorAll(".r-seat").forEach((seatEl) => {
+      const nameEl = seatEl.querySelector(".bar-text.player-name");
+      const name = nameEl ? String(nameEl.textContent || "").replace(/\s+/g, " ").trim() : "";
+      if (!name || !nameEl) return;
+      live.add(seatEl);
+      names.push(name);
+
+      let node = seatHudBySeat.get(seatEl);
+      if (!node || !node.isConnected) {
+        node = createSeatHudNode();
+        layer.appendChild(node);
+        seatHudBySeat.set(seatEl, node);
+      }
+
+      const bar = seatEl.querySelector(".r-player-bar") || nameEl;
+      const rect = bar.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) {
+        node.style.visibility = "hidden";
+        return;
+      }
+      node.style.visibility = "visible";
+      node.style.gap = metrics.gap + "px";
+      node.style.padding = metrics.stripPadY + "px " + metrics.stripPadX + "px";
+      node.style.borderRadius = (metrics.radius + 2) + "px";
+      node.style.background = "rgba(0,0,0,0.55)";
+      node.style.opacity = "0.8";
+      node._seatKey = seatHudAnchorKey(seatEl);
+      node._barW = rect.width;
+      node._barH = rect.height;
+      const placed = shownHudOffset(node._seatKey, rect.width, rect.height);
+      const left = Math.round(rect.left + rect.width / 2 + placed.dx);
+      const top = Math.round(rect.bottom + metrics.offset + 20 + placed.dy);
+      if (node._left !== left) {
+        node._left = left;
+        node.style.left = left + "px";
+      }
+      if (node._top !== top) {
+        node._top = top;
+        node.style.top = top + "px";
+      }
+      const sig = seatHudSignature(name, metrics.scale);
+      if (node._sig !== sig) {
+        node._sig = sig;
+        renderHudStatBadges(node, name, metrics);
+      }
+    });
+
+    seatHudBySeat.forEach((node, seatEl) => {
+      if (live.has(seatEl) && seatEl.isConnected) return;
+      node.remove();
+      seatHudBySeat.delete(seatEl);
+    });
+
+    if (names.length) {
+      const nextKey = names.join("|");
+      if (nextKey !== layoutSeatHuds._namesKey) {
+        layoutSeatHuds._namesKey = nextKey;
+        setCurrentTablePlayerNames(names);
+      }
+    }
+  }
+
+  function seatHudLoop() {
+    try {
+      layoutSeatHuds();
+    } catch (e) {}
+    if (!tablePlayersOverlayHidden && document.visibilityState === "visible") {
+      seatHudFrame = requestAnimationFrame(seatHudLoop);
+      return;
+    }
+    seatHudFrame = 0;
+  }
+
+  function ensureSeatHudLoop() {
+    if (tablePlayersOverlayHidden || document.visibilityState !== "visible") {
+      if (seatHudFrame) cancelAnimationFrame(seatHudFrame);
+      seatHudFrame = 0;
+      try {
+        layoutSeatHuds();
+      } catch (e) {}
+      return;
+    }
+    if (!seatHudFrame) seatHudFrame = requestAnimationFrame(seatHudLoop);
+  }
+
   function updateTablePlayersOverlay(gs, activeSeatIndexes) {
     try {
-      const id = "poker-tracker-table-players-overlay";
       const toggleId = "poker-tracker-table-players-toggle";
-      let el = document.getElementById(id);
-      if (!el) {
-        el = document.createElement("div");
-        el.id = id;
-        el.style.cssText = [
-          "position:fixed",
-          "top:50%",
-          "right:12px",
-          "transform:translateY(-50%)",
-          "z-index:2147483646",
-          "background:rgba(17,24,39,0.92)",
-          "color:#e5e7eb",
-          "border:1px solid #22c55e",
-          "padding:12px 14px",
-          "border-radius:8px",
-          "font:15px/1.5 Arial,sans-serif",
-          "box-shadow:0 4px 16px rgba(0,0,0,0.3)",
-          "pointer-events:none",
-          "min-width:260px",
-          "max-width:320px",
-          "max-height:70vh",
-          "overflow:hidden",
-          "white-space:pre-wrap",
-          "word-break:break-word",
-          "isolation:isolate"
-        ].join(";");
-        document.documentElement.appendChild(el);
-      }
       const controlsId = "poker-tracker-controls";
       let controlsEl = document.getElementById(controlsId);
       if (!controlsEl) {
@@ -979,32 +1153,105 @@
           "padding:0 14px"
         ]).join(";");
         toggleBtn.addEventListener("click", function() {
+          const wasHidden = tablePlayersOverlayHidden;
           tablePlayersOverlayHidden = !tablePlayersOverlayHidden;
-          const overlay = document.getElementById(id);
-          if (overlay) {
-            overlay.style.display = tablePlayersOverlayHidden ? "none" : "block";
-          }
+          if (wasHidden) resetHudOffsets();
           this.textContent = "HUD";
           this.style.opacity = tablePlayersOverlayHidden ? "0.75" : "1";
+          ensureSeatHudLoop();
         });
         controlsEl.appendChild(toggleBtn);
       }
       toggleBtn.textContent = "HUD";
       toggleBtn.style.opacity = tablePlayersOverlayHidden ? "0.75" : "1";
-      el.style.display = tablePlayersOverlayHidden ? "none" : "block";
 
-      if (!activeSeatIndexes.length) {
+      if (!document.getElementById("poker-tracker-hud-countdown")) {
+        const countdown = document.createElement("span");
+        countdown.id = "poker-tracker-hud-countdown";
+        countdown.title = "Time until next auto-refresh";
+        countdown.style.cssText = sharedControlBaseCss.concat([
+          "padding:0 8px",
+          "cursor:default",
+          "font:600 12px/1 Consolas,Monaco,'Courier New',monospace",
+          "letter-spacing:0",
+          "color:#9ca3af"
+        ]).join(";");
+        controlsEl.appendChild(countdown);
+        updateHudCountdownDisplay();
+      }
+      if (!document.getElementById("poker-tracker-hud-reload")) {
+        const reloadBtn = buildHudReloadButton();
+        reloadBtn.style.height = controlHeight;
+        reloadBtn.style.width = controlHeight;
+        controlsEl.appendChild(reloadBtn);
+      }
+      if (!document.getElementById("poker-tracker-extension-reload")) {
+        const extBtn = document.createElement("button");
+        extBtn.id = "poker-tracker-extension-reload";
+        extBtn.type = "button";
+        extBtn.title = "Reload extension and this table";
+        extBtn.textContent = "UPD";
+        extBtn.style.cssText = sharedControlBaseCss.concat([
+          "padding:0 10px"
+        ]).join(";");
+        extBtn.addEventListener("click", function(ev) {
+          ev.stopPropagation();
+          try { flushRawHand(); } catch (err) {}
+          this.disabled = true;
+          this.textContent = "...";
+          document.dispatchEvent(new CustomEvent("poker-tracker-reload-extension"));
+        });
+        controlsEl.appendChild(extBtn);
+      }
+      if (!document.getElementById("poker-tracker-hud-size-minus")) {
+        const minusBtn = document.createElement("button");
+        minusBtn.id = "poker-tracker-hud-size-minus";
+        minusBtn.type = "button";
+        minusBtn.title = "Smaller stats";
+        minusBtn.textContent = "\u2212";
+        minusBtn.style.cssText = sharedControlBaseCss.concat([
+          "width:" + controlHeight,
+          "padding:0",
+          "justify-content:center",
+          "font-size:18px"
+        ]).join(";");
+        minusBtn.addEventListener("click", function(ev) {
+          ev.stopPropagation();
+          changeHudSize(-1);
+        });
+        controlsEl.appendChild(minusBtn);
+      }
+      if (!document.getElementById("poker-tracker-hud-size-plus")) {
+        const plusBtn = document.createElement("button");
+        plusBtn.id = "poker-tracker-hud-size-plus";
+        plusBtn.type = "button";
+        plusBtn.title = "Bigger stats";
+        plusBtn.textContent = "+";
+        plusBtn.style.cssText = sharedControlBaseCss.concat([
+          "width:" + controlHeight,
+          "padding:0",
+          "justify-content:center",
+          "font-size:18px"
+        ]).join(";");
+        plusBtn.addEventListener("click", function(ev) {
+          ev.stopPropagation();
+          changeHudSize(1);
+        });
+        controlsEl.appendChild(plusBtn);
+      }
+
+      const domNames = collectDomSeatNames();
+      if (!activeSeatIndexes.length && !domNames.length) {
         setCurrentTablePlayerNames([]);
-        el.textContent = "-";
+        ensureSeatHudLoop();
         return;
       }
       const players = activeSeatIndexes.map((idx) => {
         const seat = gs.s[idx];
-        const name = (seat && (seat.dn || seat.n)) || "?";
-        return name;
+        return (seat && (seat.dn || seat.n)) || "";
       });
-      setCurrentTablePlayerNames(players);
-      renderHudOverlayFromCurrentState();
+      setCurrentTablePlayerNames(domNames.length ? domNames : players);
+      ensureSeatHudLoop();
     } catch (e) {}
   }
 
