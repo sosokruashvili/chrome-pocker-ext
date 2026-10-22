@@ -49,13 +49,19 @@
         seq: hand.snapshots.length + 1,
         boardCount: boardCount,
         dealerIdx: dealerIdx,
-        seats: seats.map((seat) => ({
-          idx: seat.idx,
-          name: seat.name,
-          la: seat.la === undefined ? null : seat.la,
-          b: seat.b || 0,
-          stack: seat.stack === undefined ? null : seat.stack
-        }))
+        seats: seats.map((seat) => {
+          const out = {
+            idx: seat.idx,
+            name: seat.name,
+            la: seat.la === undefined ? null : seat.la,
+            b: seat.b || 0,
+            stack: seat.stack === undefined ? null : seat.stack
+          };
+          // Player id and entry count only exist at tournament tables.
+          if (seat.pid !== undefined && seat.pid !== null) out.pid = seat.pid;
+          if (seat.ec !== undefined && seat.ec !== null) out.ec = seat.ec;
+          return out;
+        })
       });
     }
 
@@ -85,7 +91,9 @@
             name: seat.name,
             la: 16,
             b: pot,
-            stack: seat.stack
+            stack: seat.stack,
+            pid: seat.pid,
+            ec: seat.ec
           };
         }
         if (seat.la === 10 || seat.la === 16) {
@@ -95,7 +103,9 @@
             name: seat.name,
             la: previous === undefined ? 1 : previous,
             b: seat.b || 0,
-            stack: seat.stack
+            stack: seat.stack,
+            pid: seat.pid,
+            ec: seat.ec
           };
         }
         return seat;
@@ -118,7 +128,9 @@
           name: seat.name,
           la: null,
           b: seat.b || 0,
-          stack: seat.stack
+          stack: seat.stack,
+          pid: seat.pid,
+          ec: seat.ec
         })));
       }
 

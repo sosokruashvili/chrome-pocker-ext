@@ -3,7 +3,7 @@
 (function() {
   "use strict";
 
-  const TRACKER_VERSION = "v9.5";
+  const TRACKER_VERSION = "v9.6";
   const API_URL = "https://team.evlog.ge/api/hand-history";
   const RAW_HAND_API_URL = API_URL + "/raw";
   const HUD_STATS_API_URL = "https://team.evlog.ge/api/hand-history/hud-stats";
@@ -1287,12 +1287,15 @@
       if (!playerName) continue;
       playerNameBySeat[i] = playerName;
       // seat.c is the chip stack (the server omits it at 0); seat.s is not a stack.
+      // seat.i is the player id, seat.ec the entry count (1 + re-entries); tournaments only.
       seats.push({
         idx: i,
         name: playerName,
         la: toNum(seat.la, null),
         b: toNum(seat.b, 0),
-        stack: toNum(seat.c, 0)
+        stack: toNum(seat.c, 0),
+        pid: toNum(seat.i, null),
+        ec: toNum(seat.ec, null)
       });
     }
     if (!seats.length) return;

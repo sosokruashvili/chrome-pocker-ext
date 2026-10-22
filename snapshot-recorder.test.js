@@ -108,6 +108,26 @@ postedBlind.add(6, 0, 1, [
 ]);
 check("blind post is kept", postedBlind.flush().snapshots[0].seats.map((seat) => seat.name), ["SB"]);
 
+const entries = createRecorder();
+entries.add(7, 0, 0, [
+  { idx: 0, name: "A", la: 9, b: 4, stack: 96, pid: 74458, ec: 3 },
+  { idx: 1, name: "B", la: 3, b: 4, stack: 96, pid: null, ec: null }
+]);
+entries.add(7, 3, 0, [
+  { idx: 0, name: "A", la: 9, b: 0, stack: 96, pid: 74458, ec: 3 },
+  { idx: 1, name: "B", la: 3, b: 0, stack: 96, pid: null, ec: null }
+]);
+entries.add(7, 3, 0, [
+  { idx: 0, name: "A", la: 10, b: 8, stack: 96, pid: 74458, ec: 3 },
+  { idx: 1, name: "B", la: 1, b: 0, stack: 96, pid: null, ec: null }
+]);
+const withEntries = entries.flush();
+check("player id and entry count in every snapshot: preflop, street clear, winner",
+  withEntries.snapshots.map((snap) => snap.boardCount + ":" + snap.seats[0].la + ":" + snap.seats[0].pid + "/" + snap.seats[0].ec),
+  ["0:9:74458/3", "3:null:74458/3", "3:16:74458/3"]);
+check("missing player id and entry count are left out",
+  withEntries.snapshots.every((snap) => !("pid" in snap.seats[1]) && !("ec" in snap.seats[1])), true);
+
 if (failed) {
   console.error(failed + " failed");
   process.exit(1);
