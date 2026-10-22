@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Poker Tracker",
-  "version": "1.0.48",
+  "version": "1.0.51",
   "description": "Tracks poker actions on Adjarabet",
   "permissions": ["tabs", "storage"],
   "background": {
@@ -10,7 +10,7 @@
   "content_scripts": [
     {
       "matches": ["https://adjarabetnewpokerapp.adjarabet.com/*"],
-      "js": ["snapshot-recorder.js", "inspector.js"],
+      "js": ["snapshot-recorder.js", "tournament-reporter.js", "inspector.js"],
       "run_at": "document_start",
       "world": "MAIN"
     },

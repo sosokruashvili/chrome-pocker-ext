@@ -1,12 +1,13 @@
-// === POKER HAND TRACKER v9.1 ===
+// === POKER HAND TRACKER v9.4 ===
 
 (function() {
   "use strict";
 
-  const TRACKER_VERSION = "v9.1";
+  const TRACKER_VERSION = "v9.4";
   const API_URL = "https://team.evlog.ge/api/hand-history";
   const RAW_HAND_API_URL = API_URL + "/raw";
   const HUD_STATS_API_URL = "https://team.evlog.ge/api/hand-history/hud-stats";
+  const TOURNAMENT_API_URL = "https://team.evlog.ge/api/tournaments";
   const HUD_STATS_REFRESH_MS = 3 * 60 * 1000;
   const DEBUG_HUD_STATS = false;
   const HUD_STAT_BADGE_COLORS = {
@@ -58,6 +59,10 @@
   let lastEmitSignatureBySeat = {};
   let handActions = [];
   const rawRecorder = PokerSnapshotRecorder.createRecorder();
+  const tournamentReporter = PokerTournamentReporter.createReporter();
+  let currentTournamentId = null;
+  // Tournament of the hand being recorded, fixed when the hand starts.
+  let handTournamentId = null;
   let playerNameBySeat = {};
   let tablePlayersOverlayHidden = true;
   let trackingEnabled = false;
@@ -119,6 +124,14 @@
     if (val === undefined || val === null || val === "") return fallback;
     const n = Number(val);
     return Number.isFinite(n) ? n : fallback;
+  }
+
+  function getPageTableId() {
+    try {
+      return toNum(new URLSearchParams(window.location.search).get("tableId"), null);
+    } catch (e) {
+      return null;
+    }
   }
 
   function fixedCol(value) {
@@ -213,6 +226,9 @@
     };
     if (amount > 0 && CHIP_IN_ACTIONS.has(action)) {
       entry.amount = amount;
+    }
+    if (handTournamentId) {
+      entry.tournamentId = handTournamentId;
     }
     return entry;
   }
@@ -1288,6 +1304,7 @@
     if (!trackingEnabled || !trackingSendActive) return;
     const hand = rawRecorder.flush();
     if (!hand) return;
+    if (handTournamentId) hand.tournamentId = handTournamentId;
     const payload = JSON.stringify(hand);
     console.log("[tracker] POST raw hand " + hand.handId + " (" + hand.snapshots.length + " snapshots)");
     try {
@@ -1296,6 +1313,19 @@
         headers: { "Content-Type": "application/json" },
         body: payload,
         keepalive: true
+      }).catch(() => {});
+    } catch (e) {}
+  }
+
+  function sendTournamentIfDue() {
+    if (!trackingEnabled || !trackingSendActive) return;
+    const payload = tournamentReporter.due(Date.now());
+    if (!payload) return;
+    try {
+      fetch(TOURNAMENT_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
       }).catch(() => {});
     } catch (e) {}
   }
@@ -1490,12 +1520,19 @@
   function processGameState(payload) {
     const gs = payload.gameState || payload;
     if (!gs || !gs.gi || !Array.isArray(gs.s)) return;
+    // The client can keep another table subscribed (a busted tournament, a table move). Track
+    // only the table in the page URL, or two tables' hands interleave and get cut short.
+    const pageTableId = getPageTableId();
+    if (pageTableId && gs.ti && gs.ti !== pageTableId) return;
+    currentTournamentId = gs.tri || null;
+    tournamentReporter.setTournament(currentTournamentId);
 
     const handId = gs.gi;
     const boardCount = getBoardCount(gs);
     if (handId !== currentHandId) {
       flushRawHand();
       resetHandState(handId, boardCount);
+      handTournamentId = currentTournamentId;
     }
     const effectiveBoardCount = Math.max(boardCount, previousBoardCount);
     const roundNow = getRoundFromBoardCount(effectiveBoardCount);
@@ -1955,6 +1992,13 @@
       const msg = JSON.parse(rawText);
       if (msg.t === "GameState" || msg.gameState || (msg.gi && msg.s)) {
         processGameState(msg);
+      } else if (msg.t === "LobbyTournamentInfo") {
+        // The reporter merges full and partial infos and only reports the table's tournament.
+        tournamentReporter.onInfo(msg.info);
+        sendTournamentIfDue();
+      } else if (msg.t === "TournamentPrizeDistributionResponse") {
+        tournamentReporter.onPrizes(msg.distributionTable);
+        sendTournamentIfDue();
       }
     } catch (e) {}
   }
