@@ -3,7 +3,7 @@
 (function() {
   "use strict";
 
-  const TRACKER_VERSION = "v9.6";
+  const TRACKER_VERSION = "v9.7";
   const API_URL = "https://team.evlog.ge/api/hand-history";
   const RAW_HAND_API_URL = API_URL + "/raw";
   const HUD_STATS_API_URL = "https://team.evlog.ge/api/hand-history/hud-stats";
@@ -1213,9 +1213,15 @@
         extBtn.addEventListener("click", function(ev) {
           ev.stopPropagation();
           try { flushRawHand(); } catch (err) {}
-          this.disabled = true;
-          this.textContent = "...";
+          const btn = this;
+          btn.disabled = true;
+          btn.textContent = "...";
           document.dispatchEvent(new CustomEvent("poker-tracker-reload-extension"));
+          // extension-bridge.js reloads the page; if that was blocked or cancelled, let UPD be clicked again.
+          setTimeout(() => {
+            btn.disabled = false;
+            btn.textContent = "UPD";
+          }, 10000);
         });
         controlsEl.appendChild(extBtn);
       }
