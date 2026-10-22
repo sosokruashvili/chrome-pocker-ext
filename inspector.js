@@ -3,7 +3,7 @@
 (function() {
   "use strict";
 
-  const TRACKER_VERSION = "v9.7";
+  const TRACKER_VERSION = "v9.8";
   const API_URL = "https://team.evlog.ge/api/hand-history";
   const RAW_HAND_API_URL = API_URL + "/raw";
   const HUD_STATS_API_URL = "https://team.evlog.ge/api/hand-history/hud-stats";
@@ -864,10 +864,36 @@
     } catch (e) {}
   }
 
-  function resetHudOffsets() {
-    hudOffsets = {};
-    hudDrag = null;
-    saveHudOffsets();
+  // Seat template -> player name per scene, i.e. the seating the scene's dragged offsets belong to.
+  const HUD_SEATING_STORAGE_KEY = "poker-tracker-hud-seating";
+  let hudSeating = {};
+  try {
+    const storedSeating = JSON.parse(localStorage.getItem(HUD_SEATING_STORAGE_KEY) || "{}");
+    if (storedSeating && typeof storedSeating === "object") hudSeating = storedSeating;
+  } catch (e) {}
+
+  function saveHudSeating() {
+    try {
+      localStorage.setItem(HUD_SEATING_STORAGE_KEY, JSON.stringify(hudSeating));
+    } catch (e) {}
+  }
+
+  // Dragged offsets survive HUD hide/show and page reloads, but a player sitting down, players
+  // changing seats or a new table drops that scene's offsets. Players leaving keeps them.
+  function syncHudSeating(seatingByScene) {
+    Object.keys(seatingByScene).forEach((scene) => {
+      const current = seatingByScene[scene];
+      const known = hudSeating[scene];
+      if (known && !Object.keys(current).some((seat) => known[seat] !== current[seat])) return;
+      if (known) {
+        Object.keys(hudOffsets).forEach((key) => {
+          if (key.indexOf(scene + ":") === 0) delete hudOffsets[key];
+        });
+        saveHudOffsets();
+      }
+      hudSeating[scene] = current;
+      saveHudSeating();
+    });
   }
 
   function seatHudAnchorKey(seatEl) {
@@ -972,6 +998,7 @@
 
     const live = new Set();
     const names = [];
+    const seatingByScene = {};
     const metrics = hudMetrics();
     document.querySelectorAll(".r-seat").forEach((seatEl) => {
       const nameEl = seatEl.querySelector(".bar-text.player-name");
@@ -979,6 +1006,10 @@
       if (!name || !nameEl) return;
       live.add(seatEl);
       names.push(name);
+      const seatKey = seatHudAnchorKey(seatEl);
+      const sep = seatKey.indexOf(":");
+      const scene = seatKey.slice(0, sep);
+      (seatingByScene[scene] = seatingByScene[scene] || {})[seatKey.slice(sep + 1)] = name;
 
       let node = seatHudBySeat.get(seatEl);
       if (!node || !node.isConnected) {
@@ -999,7 +1030,7 @@
       node.style.borderRadius = (metrics.radius + 2) + "px";
       node.style.background = "rgba(0,0,0,0.55)";
       node.style.opacity = "0.8";
-      node._seatKey = seatHudAnchorKey(seatEl);
+      node._seatKey = seatKey;
       node._barW = rect.width;
       node._barH = rect.height;
       const placed = shownHudOffset(node._seatKey, rect.width, rect.height);
@@ -1025,6 +1056,8 @@
       node.remove();
       seatHudBySeat.delete(seatEl);
     });
+
+    syncHudSeating(seatingByScene);
 
     if (names.length) {
       const nextKey = names.join("|");
@@ -1169,9 +1202,7 @@
           "padding:0 14px"
         ]).join(";");
         toggleBtn.addEventListener("click", function() {
-          const wasHidden = tablePlayersOverlayHidden;
           tablePlayersOverlayHidden = !tablePlayersOverlayHidden;
-          if (wasHidden) resetHudOffsets();
           this.textContent = "HUD";
           this.style.opacity = tablePlayersOverlayHidden ? "0.75" : "1";
           ensureSeatHudLoop();
