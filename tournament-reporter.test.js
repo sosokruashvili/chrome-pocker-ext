@@ -18,7 +18,8 @@ function info(extra) {
   return Object.assign({ i: ID, n: "GTD", na: 39, l: 8, np: 64, npre: 10, pt: 86100, st: 5, avc: 98717 }, extra || {});
 }
 const PRIZES = [{ mpa: 36000, mpp: 0.3 }, { pf: 1, pt: 1, mpa: 24000, mpp: 0.2 }];
-const MIN = 60 * 1000;
+const MIN = 10 * 1000;
+const BEAT = 60 * 1000;
 
 const empty = createReporter();
 check("nothing before info", empty.due(0), null);
@@ -31,17 +32,20 @@ early.onInfo(info());
 check("info before the table names its tournament waits", early.due(0), null);
 early.setTournament(ID);
 check("sent once the tournament is known", early.due(1000), { info: info() });
-check("same info not resent", early.due(1000 + MIN * 5), null);
+check("same info not resent before the heartbeat", early.due(1000 + BEAT - 1), null);
+check("same info resent as a heartbeat", early.due(1000 + BEAT), { info: info() });
 
 const partial = createReporter();
 partial.setTournament(ID);
 partial.onInfo(info());
 partial.due(0);
 partial.onInfo({ i: ID, chs: 2 });
-check("partial info alone does not trigger", partial.due(30 * 1000), null);
+check("partial info alone does not trigger", partial.due(MIN * 3), null);
 partial.onInfo({ i: ID, na: 38 });
-check("partial change waits for the interval", partial.due(45 * 1000), null);
-check("partials are merged into the full info", partial.due(MIN), { info: info({ chs: 2, na: 38 }) });
+check("partials are merged into the full info", partial.due(MIN * 3), { info: info({ chs: 2, na: 38 }) });
+partial.onInfo({ i: ID, na: 37 });
+check("a change waits for the interval", partial.due(MIN * 4 - 1), null);
+check("a change is sent after the interval", partial.due(MIN * 4), { info: info({ chs: 2, na: 37 }) });
 
 const stacks = createReporter();
 stacks.setTournament(ID);
@@ -58,7 +62,7 @@ other.setTournament(ID);
 other.onInfo(info());
 other.due(0);
 other.onInfo({ i: 777, n: "browsed in the lobby", na: 5 });
-check("other tournaments are not reported", other.due(MIN * 5), null);
+check("other tournaments are not reported", other.due(BEAT - 1), null);
 
 const prizes = createReporter();
 prizes.onPrizes(PRIZES);

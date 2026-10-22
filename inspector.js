@@ -3,7 +3,7 @@
 (function() {
   "use strict";
 
-  const TRACKER_VERSION = "v9.4";
+  const TRACKER_VERSION = "v9.5";
   const API_URL = "https://team.evlog.ge/api/hand-history";
   const RAW_HAND_API_URL = API_URL + "/raw";
   const HUD_STATS_API_URL = "https://team.evlog.ge/api/hand-history/hud-stats";
