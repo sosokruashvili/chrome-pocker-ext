@@ -1,9 +1,9 @@
-// === POKER HAND TRACKER v9.0 ===
+// === POKER HAND TRACKER v9.1 ===
 
 (function() {
   "use strict";
 
-  const TRACKER_VERSION = "v9.0";
+  const TRACKER_VERSION = "v9.1";
   const API_URL = "https://team.evlog.ge/api/hand-history";
   const RAW_HAND_API_URL = API_URL + "/raw";
   const HUD_STATS_API_URL = "https://team.evlog.ge/api/hand-history/hud-stats";
@@ -1270,12 +1270,13 @@
       const playerName = seat.dn || seat.n;
       if (!playerName) continue;
       playerNameBySeat[i] = playerName;
+      // seat.c is the chip stack (the server omits it at 0); seat.s is not a stack.
       seats.push({
         idx: i,
         name: playerName,
         la: toNum(seat.la, null),
         b: toNum(seat.b, 0),
-        stack: toNum(seat.s, null)
+        stack: toNum(seat.c, 0)
       });
     }
     if (!seats.length) return;
@@ -1667,8 +1668,8 @@
           if (!seat) return;
           const playerName = seat.dn || seat.n;
           if (!playerName) return;
-          // Skip likely all-in players; they may not have checking options.
-          if (toNum(seat.s, 1) <= 0) return;
+          // Skip all-in players (no chips behind); they have no checking options.
+          if (toNum(seat.c, 0) <= 0) return;
           const currentLa = toNum(seat.la, null);
           const currentAction = currentLa !== null ? (ACTION_MAP[currentLa] || null) : null;
           if (currentAction !== "check" && currentAction !== "call") return;
