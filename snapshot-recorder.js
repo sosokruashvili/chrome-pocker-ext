@@ -184,12 +184,25 @@
       return payload;
     }
 
+    // Drops the hand being recorded without posting it (returns what was dropped). Its later
+    // snapshots are ignored too, so it can never be recorded again from the middle.
+    function discard() {
+      if (!current || sent.has(current.handId)) {
+        current = null;
+        return null;
+      }
+      sent.add(current.handId);
+      const dropped = current.snapshots.length ? publish(current) : null;
+      current = null;
+      return dropped;
+    }
+
     function peek() {
       if (!current) return null;
       return publish(current);
     }
 
-    return { add: add, flush: flush, peek: peek };
+    return { add: add, flush: flush, discard: discard, peek: peek };
   }
 
   return { createRecorder: createRecorder };

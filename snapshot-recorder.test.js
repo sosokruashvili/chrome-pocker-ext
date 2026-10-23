@@ -128,6 +128,23 @@ check("player id and entry count in every snapshot: preflop, street clear, winne
 check("missing player id and entry count are left out",
   withEntries.snapshots.every((snap) => !("pid" in snap.seats[1]) && !("ec" in snap.seats[1])), true);
 
+const dropped = createRecorder();
+dropped.add(8, 0, 0, [{ idx: 0, name: "A", la: 7, b: 1, stack: 10 }]);
+dropped.add(8, 0, 0, [{ idx: 0, name: "A", la: 9, b: 3, stack: 8 }]);
+const droppedHand = dropped.discard();
+check("discard returns the unfinished hand it dropped", [droppedHand.handId, droppedHand.snapshots.length], [8, 2]);
+check("a discarded hand is not posted later", dropped.flush(), null);
+dropped.add(8, 0, 0, [{ idx: 0, name: "A", la: 16, b: 3, stack: 11 }]);
+check("its later snapshots are ignored", [dropped.peek(), dropped.flush()], [null, null]);
+check("discard with nothing recorded returns null", dropped.discard(), null);
+dropped.add(9, 0, 0, [{ idx: 0, name: "A", la: 7, b: 1, stack: 10 }]);
+check("the next hand records normally", dropped.flush().handId, 9);
+
+const finished = createRecorder();
+finished.add(10, 0, 0, [{ idx: 0, name: "A", la: 16, b: 3, stack: 11 }]);
+finished.flush();
+check("discard after a posted hand drops nothing", finished.discard(), null);
+
 if (failed) {
   console.error(failed + " failed");
   process.exit(1);

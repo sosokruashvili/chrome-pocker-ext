@@ -330,18 +330,53 @@ const FULL = " 9 [6,7,null] .. [1,1,16]";
   check("closing the page posts nothing more after finished hands", page.handPosts().length, 4);
 }
 
-// --- REC off in the middle of a hand posts what was recorded of it, once.
-{
+// --- UPD, REC off and closing the page drop unfinished hands instead of posting them cut.
+function midHand(tableIds) {
   const page = createPage({ tableId: T1 });
   page.show(T1, P1);
-  hand(T1, null, 301, P1).forEach((msg) => page.send(msg));
+  interleave(page, tableIds.map((id) => hand(id, null, id === T1 ? 1201 : 1301, id === T1 ? P1 : P2)));
   clickRec(page);
-  const next = hand(T1, null, 302, P1);
-  next.slice(0, 4).forEach((msg) => page.send(msg));
+  // Finished hands on every table, then the next ones are cut off in the middle.
+  interleave(page, tableIds.map((id) => hand(id, null, id === T1 ? 1202 : 1302, id === T1 ? P1 : P2)));
+  interleave(page, tableIds.map((id) => hand(id, null, id === T1 ? 1203 : 1303, id === T1 ? P1 : P2).slice(0, 5)));
+  return page;
+}
+{
+  const page = midHand([T1, T2]);
   clickRec(page);
-  next.slice(4).forEach((msg) => page.send(msg));
-  check("REC off posts the hand in progress, cut", page.handPosts().map(complete), ["302 4 [6,7,null] .. [1,3,9]"]);
+  check("REC off mid-hand posts only the finished hands", page.handPosts().map((post) => post.handId).sort(), [1202, 1302]);
+  check("REC off logs the dropped hands",
+    page.logs.filter((line) => line.indexOf("dropped unfinished hand") >= 0).length, 2);
   check("REC off shows disabled", page.element("poker-tracker-tracking-switch").title, "Tracking disabled");
+  hand(T1, null, 1203, P1).slice(5).forEach((msg) => page.send(msg));
+  check("the dropped hand's end is not posted later", page.handPosts().length, 2);
+}
+{
+  const page = midHand([T1, T2]);
+  page.element("poker-tracker-extension-reload").fire("click");
+  check("UPD mid-hand posts nothing more", page.handPosts().map((post) => post.handId).sort(), [1202, 1302]);
+}
+{
+  const page = midHand([T1, T2]);
+  page.pageHide();
+  check("closing the page mid-hand posts nothing more", page.handPosts().map((post) => post.handId).sort(), [1202, 1302]);
+}
+{
+  // A table closed mid-hand stops sending; its half hand is dropped at UPD / REC off / page close.
+  const page = midHand([T1, T2]);
+  hand(T1, null, 1203, P1).slice(5).forEach((msg) => page.send(msg));
+  page.pageHide();
+  check("a table closed mid-hand is dropped, the other table's hand still posted",
+    page.handPosts().map((post) => post.handId).sort(), [1202, 1203, 1302]);
+}
+{
+  // REC off then on in the same hand: that hand is not picked up again from the middle.
+  const page = midHand([T1]);
+  clickRec(page);
+  clickRec(page);
+  hand(T1, null, 1203, P1).slice(5).forEach((msg) => page.send(msg));
+  hand(T1, null, 1204, P1).forEach((msg) => page.send(msg));
+  check("REC back on resumes at the next hand", page.handPosts().map(complete), ["1202" + FULL, "1204" + FULL]);
 }
 
 // --- A table opened while REC is on skips its first (joined mid-way) hand only.

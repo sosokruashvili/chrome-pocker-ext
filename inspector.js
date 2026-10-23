@@ -3,7 +3,7 @@
 (function() {
   "use strict";
 
-  const TRACKER_VERSION = "v9.9";
+  const TRACKER_VERSION = "v10.0";
   const API_URL = "https://team.evlog.ge/api/hand-history";
   const RAW_HAND_API_URL = API_URL + "/raw";
   const HUD_STATS_API_URL = "https://team.evlog.ge/api/hand-history/hud-stats";
@@ -964,7 +964,7 @@
         trackingSwitch.setAttribute("role", "switch");
         trackingSwitch.addEventListener("click", function() {
           if (trackingEnabled) {
-            flushAllTables();
+            dropUnfinishedHands();
             trackingEnabled = false;
             tables.forEach((table) => {
               table.recording = false;
@@ -1029,7 +1029,7 @@
         ]).join(";");
         extBtn.addEventListener("click", function(ev) {
           ev.stopPropagation();
-          try { flushAllTables(); } catch (err) {}
+          try { dropUnfinishedHands(); } catch (err) {}
           const btn = this;
           btn.disabled = true;
           btn.textContent = "...";
@@ -1188,8 +1188,15 @@
     } catch (e) {}
   }
 
-  function flushAllTables() {
-    tables.forEach((table) => flushTable(table));
+  // UPD, REC off and closing the page. A finished hand is posted as soon as its winner shows, so
+  // any hand still being recorded here is unfinished; it is dropped rather than posted cut short.
+  function dropUnfinishedHands() {
+    tables.forEach((table) => {
+      const dropped = table.recorder.discard();
+      if (dropped) {
+        console.log("[tracker] dropped unfinished hand " + dropped.handId + " table " + table.id + " (" + dropped.snapshots.length + " snapshots)");
+      }
+    });
   }
 
   function syncOpenTournaments() {
@@ -1326,7 +1333,7 @@
   window.WebSocket.CLOSING = 2;
   window.WebSocket.CLOSED = 3;
 
-  window.addEventListener("pagehide", flushAllTables);
+  window.addEventListener("pagehide", dropUnfinishedHands);
 
   window._pokerActions = function() {
     const hands = [];
