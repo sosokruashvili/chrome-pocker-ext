@@ -23,20 +23,20 @@ const BEAT = 60 * 1000;
 
 const empty = createReporter();
 check("nothing before info", empty.due(0), null);
-empty.setTournament(ID);
+empty.setTournaments([ID]);
 empty.onInfo({ n: "no id" });
 check("info without id ignored", empty.due(0), null);
 
 const early = createReporter();
 early.onInfo(info());
 check("info before the table names its tournament waits", early.due(0), null);
-early.setTournament(ID);
+early.setTournaments([ID]);
 check("sent once the tournament is known", early.due(1000), { info: info() });
 check("same info not resent before the heartbeat", early.due(1000 + BEAT - 1), null);
 check("same info resent as a heartbeat", early.due(1000 + BEAT), { info: info() });
 
 const partial = createReporter();
-partial.setTournament(ID);
+partial.setTournaments([ID]);
 partial.onInfo(info());
 partial.due(0);
 partial.onInfo({ i: ID, chs: 2 });
@@ -48,7 +48,7 @@ check("a change waits for the interval", partial.due(MIN * 4 - 1), null);
 check("a change is sent after the interval", partial.due(MIN * 4), { info: info({ chs: 2, na: 37 }) });
 
 const stacks = createReporter();
-stacks.setTournament(ID);
+stacks.setTournaments([ID]);
 stacks.onInfo(info());
 stacks.due(0);
 stacks.onInfo({ i: ID, avc: 120000 });
@@ -58,7 +58,7 @@ check("players left change waits for the interval", stacks.due(MIN - 1), null);
 check("sent after the interval with latest stats", stacks.due(MIN), { info: info({ avc: 120000, na: 37 }) });
 
 const other = createReporter();
-other.setTournament(ID);
+other.setTournaments([ID]);
 other.onInfo(info());
 other.due(0);
 other.onInfo({ i: 777, n: "browsed in the lobby", na: 5 });
@@ -67,7 +67,7 @@ check("other tournaments are not reported", other.due(BEAT - 1), null);
 const prizes = createReporter();
 prizes.onPrizes(PRIZES);
 prizes.onInfo(info());
-prizes.setTournament(ID);
+prizes.setTournaments([ID]);
 check("prizes seen before the tournament ride with the first send", prizes.due(0), { info: info(), prizes: PRIZES });
 prizes.onPrizes(PRIZES);
 check("identical prizes do not trigger", prizes.due(MIN * 2), null);
@@ -80,14 +80,70 @@ check("later sends leave prizes out", prizes.due(MIN * 5), { info: info({ l: 9 }
 const moved = createReporter();
 moved.onPrizes(PRIZES);
 moved.onInfo(info());
-moved.setTournament(ID);
+moved.setTournaments([ID]);
 moved.due(0);
 moved.onInfo(info({ i: 999 }));
-moved.setTournament(999);
+moved.setTournaments([999]);
 check("new tournament sent at once, old prizes dropped", moved.due(1), { info: info({ i: 999 }) });
 
+// Two tables in one tab (the client's table switcher), each in its own tournament.
+const OTHER = 1118315;
+function drain(reporter, now) {
+  const out = [];
+  let payload = reporter.due(now);
+  while (payload) {
+    out.push(payload.info.i + (payload.prizes ? "+prizes" : ""));
+    payload = reporter.due(now);
+  }
+  return out;
+}
+
+const two = createReporter();
+two.onInfo(info());
+two.onInfo(info({ i: OTHER }));
+two.setTournaments([ID, OTHER]);
+check("both open tournaments are sent", drain(two, 0), [String(ID), String(OTHER)]);
+check("neither is resent before the heartbeat", drain(two, BEAT - 1), []);
+two.onInfo({ i: OTHER, na: 20 });
+check("a change in one is sent for that one only", drain(two, MIN), [String(OTHER)]);
+check("heartbeats keep their own clocks", drain(two, BEAT), [String(ID)]);
+two.setTournaments([OTHER]);
+check("a closed table's tournament is no longer reported", drain(two, BEAT * 3), [String(OTHER)]);
+two.setTournaments([OTHER, OTHER, null]);
+check("duplicates and cash tables are ignored", drain(two, BEAT * 5), [String(OTHER)]);
+
+const unclear = createReporter();
+unclear.onInfo(info());
+unclear.onInfo(info({ i: OTHER }));
+unclear.setTournaments([ID, OTHER]);
+unclear.onPrizes(PRIZES);
+check("prizes with two tournaments open are dropped", drain(unclear, 0), [String(ID), String(OTHER)]);
+unclear.setTournaments([ID]);
+check("and are not given to the one left open", drain(unclear, BEAT), [String(ID)]);
+
+const claimed = createReporter();
+claimed.onInfo(info());
+claimed.onInfo(info({ i: OTHER }));
+claimed.setTournaments([ID]);
+claimed.onPrizes(PRIZES);
+claimed.setTournaments([ID, OTHER]);
+check("prizes seen while one tournament was open stay with it", drain(claimed, 0), [ID + "+prizes", String(OTHER)]);
+
+const pending = createReporter();
+pending.onInfo(info());
+pending.onInfo(info({ i: OTHER }));
+pending.onPrizes(PRIZES);
+pending.setTournaments([ID, OTHER]);
+check("prizes seen before two tournaments open are dropped", drain(pending, 0), [String(ID), String(OTHER)]);
+
+const sameTournament = createReporter();
+sameTournament.onInfo(info());
+sameTournament.onPrizes(PRIZES);
+sameTournament.setTournaments([ID, ID]);
+check("two tables of one tournament keep its prizes", drain(sameTournament, 0), [ID + "+prizes"]);
+
 const copy = createReporter();
-copy.setTournament(ID);
+copy.setTournaments([ID]);
 copy.onInfo(info());
 const sent = copy.due(0);
 copy.onInfo({ i: ID, na: 1 });
