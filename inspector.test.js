@@ -122,7 +122,8 @@ function createPage(options) {
   const posts = [];
   const logs = [];
   const frames = [];
-  const storage = Object.assign({}, opts.storage || {});
+  // Tabs of one browser share localStorage: pass the same sharedStorage object to each page.
+  const storage = opts.sharedStorage || Object.assign({}, opts.storage || {});
   const winListeners = {};
   const page = { shown: null };
 
@@ -234,6 +235,8 @@ function createPage(options) {
       return layer ? layer.children : [];
     },
     pageHide: () => (winListeners.pagehide || []).forEach((fn) => fn()),
+    // Another tab wrote this localStorage key (the browser tells every tab but the writer).
+    storageEvent: (key) => (winListeners.storage || []).forEach((fn) => fn({ key: key })),
     handPosts: () => posts.filter((post) => /\/raw$/.test(post.url)).map((post) => post.body),
     hudPosts: () => posts.filter((post) => /\/hud-stats$/.test(post.url)).map((post) => post.body),
     tournamentPosts: () => posts.filter((post) => /\/tournaments$/.test(post.url)).map((post) => post.body)
@@ -461,6 +464,75 @@ function midHand(tableIds) {
   check("legacy offset is now kept under the table",
     [Object.keys(JSON.parse(page.storage["poker-tracker-hud-offsets"])), Object.keys(JSON.parse(page.storage["poker-tracker-hud-seating"]))],
     [["t" + T1 + ":seat-template-2"], ["t" + T1]]);
+}
+
+// --- HUD: several tabs share the stored positions, and a tab saves only what it changed.
+function hudTab(storage, tableId, names, handId) {
+  const page = createPage({ tableId: tableId, sharedStorage: storage });
+  page.show(tableId, names);
+  page.send(hand(tableId, null, handId, names)[0]);
+  page.element("poker-tracker-table-players-toggle").fire("click");
+  return page;
+}
+
+function hudLefts(page) {
+  return page.hudNodes().map((node) => parseFloat(node.style.left));
+}
+
+function startDrag(page, idx, dx) {
+  const node = page.hudNodes()[idx];
+  node.fire("pointerdown", { button: 0, pointerId: 1, clientX: 100, clientY: 100 });
+  node.fire("pointermove", { pointerId: 1, clientX: 100 + dx, clientY: 100 });
+}
+
+function endDrag(page, idx) {
+  page.hudNodes()[idx].fire("pointerup", { pointerId: 1 });
+}
+
+const OFFSETS = "poker-tracker-hud-offsets";
+const SEATING = "poker-tracker-hud-seating";
+const storedKeys = (storage, key) => Object.keys(JSON.parse(storage[key] || "{}")).sort();
+
+{
+  const storage = {};
+  const tabA = hudTab(storage, T1, P1, 821);
+  const tabB = hudTab(storage, T2, P2, 921);
+  // Both tabs load before either saves anything.
+  tabA.runFrame();
+  tabB.runFrame();
+  startDrag(tabA, 1, 40);
+  endDrag(tabA, 1);
+  // Tab B has not heard of tab A's drag when it saves its own.
+  startDrag(tabB, 1, 20);
+  endDrag(tabB, 1);
+  check("two tabs' drags are both kept", storedKeys(storage, OFFSETS), ["t" + T1 + ":seat-template-2", "t" + T2 + ":seat-template-2"]);
+  check("two tabs' seatings are both kept", storedKeys(storage, SEATING), ["t" + T1, "t" + T2]);
+  tabB.hudNodes()[1].fire("dblclick");
+  check("resetting a seat in one tab keeps the other tab's drag", storedKeys(storage, OFFSETS), ["t" + T1 + ":seat-template-2"]);
+}
+
+{
+  const storage = {};
+  const tabA = hudTab(storage, T1, P1, 831);
+  const tabB = hudTab(storage, T1, P1, 832);
+  tabA.runFrame();
+  tabB.runFrame();
+  const start = hudLefts(tabB);
+  startDrag(tabA, 1, 40);
+  endDrag(tabA, 1);
+  tabB.storageEvent(OFFSETS);
+  tabB.runFrame();
+  check("a drag shows in the other tab of the same table", hudLefts(tabB)[1] - start[1], 40);
+  // Tab B is mid-drag when tab A saves another seat.
+  startDrag(tabB, 0, 30);
+  startDrag(tabA, 2, -25);
+  endDrag(tabA, 2);
+  tabB.storageEvent(OFFSETS);
+  tabB.runFrame();
+  check("another tab's save keeps a drag in progress", [0, 1, 2].map((i) => hudLefts(tabB)[i] - start[i]), [30, 40, -25]);
+  endDrag(tabB, 0);
+  check("all three drags are stored", storedKeys(storage, OFFSETS), ["t" + T1 + ":seat-template-1", "t" + T1 + ":seat-template-2", "t" + T1 + ":seat-template-3"]);
+  check("the drag in progress is stored as dragged", JSON.parse(storage[OFFSETS])["t" + T1 + ":seat-template-1"].dx, 30);
 }
 
 // --- HUD stats are loaded for every open table's players, so a switched-to table has them at once.

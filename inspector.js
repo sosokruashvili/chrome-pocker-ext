@@ -3,7 +3,7 @@
 (function() {
   "use strict";
 
-  const TRACKER_VERSION = "v10.0";
+  const TRACKER_VERSION = "v10.1";
   const API_URL = "https://team.evlog.ge/api/hand-history";
   const RAW_HAND_API_URL = API_URL + "/raw";
   const HUD_STATS_API_URL = "https://team.evlog.ge/api/hand-history/hud-stats";
@@ -584,33 +584,77 @@
     });
   }
 
+  // Every poker tab keeps its own copy of these maps, all stored under one localStorage key. A tab
+  // saves only what it changed since it last read the map, on top of what other tabs saved
+  // meanwhile, and takes other tabs' saves in as they happen (the storage event).
+  function readStoredMap(storageKey) {
+    try {
+      const stored = JSON.parse(localStorage.getItem(storageKey) || "{}");
+      if (stored && typeof stored === "object") return stored;
+    } catch (e) {}
+    return {};
+  }
+
+  // Applies this tab's changes (current against base, the map as this tab last read it) to stored.
+  function applyLocalChanges(stored, current, base) {
+    Object.keys(base).forEach((key) => {
+      if (!(key in current)) delete stored[key];
+    });
+    Object.keys(current).forEach((key) => {
+      if (JSON.stringify(current[key]) !== JSON.stringify(base[key])) stored[key] = current[key];
+    });
+    return stored;
+  }
+
+  // Returns the map as saved, or null when it could not be saved (the changes are kept for next time).
+  function saveSharedMap(storageKey, current, base) {
+    try {
+      const merged = applyLocalChanges(readStoredMap(storageKey), current, base);
+      localStorage.setItem(storageKey, JSON.stringify(merged));
+      return merged;
+    } catch (e) {
+      return null;
+    }
+  }
+
   const HUD_OFFSET_STORAGE_KEY = "poker-tracker-hud-offsets";
-  let hudOffsets = {};
-  try {
-    const storedOffsets = JSON.parse(localStorage.getItem(HUD_OFFSET_STORAGE_KEY) || "{}");
-    if (storedOffsets && typeof storedOffsets === "object") hudOffsets = storedOffsets;
-  } catch (e) {}
+  let hudOffsets = readStoredMap(HUD_OFFSET_STORAGE_KEY);
+  let hudOffsetsBase = readStoredMap(HUD_OFFSET_STORAGE_KEY);
   let hudDrag = null;
 
   function saveHudOffsets() {
-    try {
-      localStorage.setItem(HUD_OFFSET_STORAGE_KEY, JSON.stringify(hudOffsets));
-    } catch (e) {}
+    const saved = saveSharedMap(HUD_OFFSET_STORAGE_KEY, hudOffsets, hudOffsetsBase);
+    if (!saved) return;
+    hudOffsets = saved;
+    hudOffsetsBase = JSON.parse(JSON.stringify(saved));
   }
 
   // Seat template -> player name per table, i.e. the seating the table's dragged offsets belong to.
   const HUD_SEATING_STORAGE_KEY = "poker-tracker-hud-seating";
-  let hudSeating = {};
-  try {
-    const storedSeating = JSON.parse(localStorage.getItem(HUD_SEATING_STORAGE_KEY) || "{}");
-    if (storedSeating && typeof storedSeating === "object") hudSeating = storedSeating;
-  } catch (e) {}
+  let hudSeating = readStoredMap(HUD_SEATING_STORAGE_KEY);
+  let hudSeatingBase = readStoredMap(HUD_SEATING_STORAGE_KEY);
 
   function saveHudSeating() {
-    try {
-      localStorage.setItem(HUD_SEATING_STORAGE_KEY, JSON.stringify(hudSeating));
-    } catch (e) {}
+    const saved = saveSharedMap(HUD_SEATING_STORAGE_KEY, hudSeating, hudSeatingBase);
+    if (!saved) return;
+    hudSeating = saved;
+    hudSeatingBase = JSON.parse(JSON.stringify(saved));
   }
+
+  // Another tab saved: its changes show here at the next frame. This tab's unsaved changes (a drag
+  // in progress) stay on top.
+  window.addEventListener("storage", (event) => {
+    if (event.key === null || event.key === HUD_OFFSET_STORAGE_KEY) {
+      const stored = readStoredMap(HUD_OFFSET_STORAGE_KEY);
+      hudOffsets = applyLocalChanges(JSON.parse(JSON.stringify(stored)), hudOffsets, hudOffsetsBase);
+      hudOffsetsBase = stored;
+    }
+    if (event.key === null || event.key === HUD_SEATING_STORAGE_KEY) {
+      const stored = readStoredMap(HUD_SEATING_STORAGE_KEY);
+      hudSeating = applyLocalChanges(JSON.parse(JSON.stringify(stored)), hudSeating, hudSeatingBase);
+      hudSeatingBase = stored;
+    }
+  });
 
   // Dragged offsets are kept per table and survive HUD hide/show, page reloads and switching
   // between tables, but a player sitting down or players changing seats drops that table's
