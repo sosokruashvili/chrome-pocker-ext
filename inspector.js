@@ -1,13 +1,16 @@
-// === POKER HAND TRACKER v9.4 ===
+// === POKER HAND TRACKER === (version: TRACKER_VERSION below)
 
 (function() {
   "use strict";
 
-  const TRACKER_VERSION = "v10.1";
+  const TRACKER_VERSION = "v10.2";
   const API_URL = "https://team.evlog.ge/api/hand-history";
   const RAW_HAND_API_URL = API_URL + "/raw";
   const HUD_STATS_API_URL = "https://team.evlog.ge/api/hand-history/hud-stats";
   const TOURNAMENT_API_URL = "https://team.evlog.ge/api/tournaments";
+  // The version in the extension's TrueNAS folder, which UPD loads; the portal reads it there.
+  const VERSION_API_URL = "https://team.evlog.ge/api/chrome-extension/version";
+  const VERSION_CHECK_MS = 5 * 60 * 1000;
   const HUD_STATS_REFRESH_MS = 3 * 60 * 1000;
   const DEBUG_HUD_STATS = false;
   const HUD_STAT_BADGE_COLORS = {
@@ -35,6 +38,9 @@
   let nextHudReloadAt = 0;
   let seatHudFrame = 0;
   const seatHudBySeat = new Map();
+  // The TrueNAS folder's version when it differs from this one (UPD then shows red), else null.
+  let newerTrackerVersion = null;
+  let versionCheckedAt = 0;
 
   console.log(
     "%c[tracker] " + TRACKER_VERSION + " loaded",
@@ -521,6 +527,58 @@
   startHudStatsLoop();
   startHudCountdownTicker();
 
+  function ensureUpdPulseKeyframes() {
+    if (document.getElementById("poker-tracker-upd-pulse-style")) return;
+    const style = document.createElement("style");
+    style.id = "poker-tracker-upd-pulse-style";
+    style.textContent =
+      "@keyframes poker-tracker-upd-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.75); } 50% { box-shadow: 0 0 0 7px rgba(239,68,68,0); } }";
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  // UPD turns red and pulses while the TrueNAS folder holds another version than this one.
+  function applyUpdateState() {
+    const btn = document.getElementById("poker-tracker-extension-reload");
+    if (!btn) return;
+    if (newerTrackerVersion) {
+      ensureUpdPulseKeyframes();
+      btn.setAttribute("data-update", newerTrackerVersion);
+      btn.title = "New version " + newerTrackerVersion + " (this is " + TRACKER_VERSION + "). Click to update. " +
+        "If it stays red after updating, download the extension again from the portal.";
+      btn.style.background = "linear-gradient(180deg,#dc2626,#991b1b)";
+      btn.style.borderColor = "#fca5a5";
+      btn.style.animation = "poker-tracker-upd-pulse 1.4s ease-in-out infinite";
+      return;
+    }
+    btn.removeAttribute("data-update");
+    btn.title = "Reload extension and this table";
+    btn.style.background = "linear-gradient(180deg,#1f2937,#111827)";
+    btn.style.borderColor = "#22c55e";
+    btn.style.animation = "";
+  }
+
+  function checkForUpdate() {
+    versionCheckedAt = Date.now();
+    try {
+      fetch(VERSION_API_URL, { cache: "no-store" })
+        .then((response) => (response.ok ? response.text() : ""))
+        .then((text) => {
+          let data = null;
+          try {
+            data = text ? JSON.parse(text) : null;
+          } catch (e) {}
+          const latest = data && typeof data.tracker === "string" ? data.tracker.trim() : "";
+          // No answer or no version (TrueNAS unreachable): keep what was known.
+          if (!latest) return;
+          newerTrackerVersion = latest === TRACKER_VERSION ? null : latest;
+          applyUpdateState();
+        })
+        .catch(() => {});
+    } catch (e) {}
+  }
+  checkForUpdate();
+  setInterval(checkForUpdate, VERSION_CHECK_MS);
+
   // Background tabs throttle timers, so the interval can drift or stall while hidden.
   // When the tab becomes visible again, run an overdue refresh immediately.
   document.addEventListener("visibilitychange", () => {
@@ -533,6 +591,7 @@
     if (Date.now() >= nextHudReloadAt) {
       forceRefreshHudStats().catch(() => {});
     }
+    if (Date.now() - versionCheckedAt >= VERSION_CHECK_MS) checkForUpdate();
   });
 
   function collectDomSeatNames() {
@@ -1085,6 +1144,7 @@
           }, 10000);
         });
         controlsEl.appendChild(extBtn);
+        applyUpdateState();
       }
       if (!document.getElementById("poker-tracker-hud-size-minus")) {
         const minusBtn = document.createElement("button");
@@ -1220,6 +1280,8 @@
     const hand = table.recorder.flush();
     if (!hand) return;
     if (table.handTournamentId) hand.tournamentId = table.handTournamentId;
+    // The portal keeps a newer tracker's hand over an older one's.
+    hand.trackerVersion = TRACKER_VERSION;
     const payload = JSON.stringify(hand);
     console.log("[tracker] POST raw hand " + hand.handId + " table " + table.id + " (" + hand.snapshots.length + " snapshots)");
     try {
@@ -1257,7 +1319,7 @@
         fetch(TOURNAMENT_API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(Object.assign({ trackerVersion: TRACKER_VERSION }, payload))
         }).catch(() => {});
       } catch (e) {}
       payload = tournamentReporter.due(now);

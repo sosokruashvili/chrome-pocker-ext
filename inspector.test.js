@@ -5,6 +5,9 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
+// The version inspector.js runs as, read the way the portal reads it.
+const TRACKER_VERSION = fs.readFileSync(path.join(__dirname, "inspector.js"), "utf8").match(/TRACKER_VERSION\s*=\s*"([^"]+)"/)[1];
+
 let failed = 0;
 function check(name, actual, expected) {
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
@@ -60,6 +63,9 @@ class FakeElement {
   }
   getAttribute(name) {
     return name in this.attrs ? this.attrs[name] : null;
+  }
+  removeAttribute(name) {
+    delete this.attrs[name];
   }
   addEventListener(type, fn) {
     (this.listeners[type] = this.listeners[type] || []).push(fn);
@@ -180,7 +186,11 @@ function createPage(options) {
     },
     fetch(url, init) {
       posts.push({ url: url, body: init && init.body ? JSON.parse(init.body) : null });
-      return Promise.resolve({ status: 200, ok: true, text: () => Promise.resolve("[]") });
+      // The portal's answer to the update check: the version in the TrueNAS folder (opts.nasVersion).
+      const text = /\/chrome-extension\/version$/.test(url)
+        ? JSON.stringify({ status: "ok", tracker: opts.nasVersion === undefined ? TRACKER_VERSION : opts.nasVersion })
+        : "[]";
+      return Promise.resolve({ status: 200, ok: true, text: () => Promise.resolve(text) });
     },
     requestAnimationFrame(fn) {
       frames.push(fn);
@@ -331,6 +341,8 @@ const FULL = " 9 [6,7,null] .. [1,1,16]";
     }), true);
   page.pageHide();
   check("closing the page posts nothing more after finished hands", page.handPosts().length, 4);
+  check("every hand says which tracker version recorded it", page.handPosts().map((post) => post.trackerVersion),
+    [TRACKER_VERSION, TRACKER_VERSION, TRACKER_VERSION, TRACKER_VERSION]);
 }
 
 // --- UPD, REC off and closing the page drop unfinished hands instead of posting them cut.
@@ -412,6 +424,7 @@ function midHand(tableIds) {
   page.clock.now += 61000;
   page.send({ t: "LobbyTournamentInfo", info: { i: 22, na: 38 } });
   check("each keeps reporting", page.tournamentPosts().map((post) => post.info.i + ":" + post.info.na), ["11:30", "22:40", "11:30", "22:38"]);
+  check("tournament reports say the tracker version", page.tournamentPosts().every((post) => post.trackerVersion === TRACKER_VERSION), true);
 }
 
 // --- HUD: dragged positions are kept per table across switches.
@@ -547,6 +560,19 @@ const storedKeys = (storage, key) => Object.keys(JSON.parse(storage[key] || "{}"
   const asked = new Set();
   page.hudPosts().forEach((body) => body.playernames.forEach((name) => asked.add(name)));
   check("HUD stats are requested for the hidden table's players too", Array.from(asked).sort(), P1.concat(P2).sort());
+
+  // --- UPD shows when the TrueNAS folder (which UPD loads) holds another version.
+  // The check runs at page load, before the first GameState draws the controls.
+  async function updButton(nasVersion) {
+    const tab = createPage({ tableId: T1, nasVersion: nasVersion });
+    await settle();
+    tab.send(hand(T1, null, 1201, P1)[0]);
+    const upd = tab.element("poker-tracker-extension-reload");
+    return [upd.getAttribute("data-update"), upd.title.indexOf("New version") === 0, Boolean(upd.style.animation)];
+  }
+  check("UPD is red with the new version when the folder has another one", await updButton("v99.0"), ["v99.0", true, true]);
+  check("UPD is plain when the folder has this version", await updButton(TRACKER_VERSION), [null, false, false]);
+  check("UPD is plain when the folder can't be read", await updButton(null), [null, false, false]);
 
   if (failed) {
     console.error(failed + " failed");
